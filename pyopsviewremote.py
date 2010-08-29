@@ -7,17 +7,33 @@ class OpsviewServer(object):
         self.domain = domain
         self.path = path
         self.port = port
+        self.hosts = []
+
+    def __str__(self):
+        return '%s:%i#%s' % (self.domain, self.port, self.path)
+
+    def __repr__(self):
+        return 'Server %s' % self
 
     def _connect(self):
         pass
 
-    def getStatusAll(self):
+    def _login(self):
+        pass
+
+    def _acknowledge(self, targets, comment, notify, auto_remove_comment):
+        pass
+
+    def _sendXML(self, payload):
+        pass
+
+    def getStatusAll(self, filters):
+        pass
+
+    def getStatusHost(self, filters, host):
         pass
 
     def getStatusService(self, host, service):
-        pass
-
-    def getStatusHost(self, host):
         pass
 
     def getStatusHostgroup(self, hostgroup):
