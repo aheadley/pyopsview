@@ -26,6 +26,14 @@ class OpsviewServer(object):
             'api':              '%sapi' % self.path,
         })
 
+        self.filters = dict({
+            'ok':           ('state', 0),
+            'warning':      ('state', 1),
+            'critical':     ('state', 2),
+            'unknown':      ('state', 3),
+            'unhandled':    ('filter', 'unhandled'),
+        })
+
         self._cookies = urllib2.HTTPCookieProcessor()
         self._opener = urllib2.build_opener(self._cookies)
 
@@ -49,8 +57,8 @@ class OpsviewServer(object):
     def _sendXML(self, payload):
         pass
 
-    def _sendGet(self, location, parameters=[], headers=None):
-        request = urllib2.Request('https://%s/%s?%s' % (self.domain, location, urllib.urlencode(parameters)))
+    def _sendGet(self, location, parameters=None, headers=None):
+        request = urllib2.Request('https://%s/%s?%s' % (self.domain, location, urllib.urlencode(parameters or [])))
         if headers:
             map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
         request.add_header('Content-Type', 'text/xml')
@@ -73,7 +81,9 @@ class OpsviewServer(object):
             return reply
 
     def getStatusAll(self, filters=None):
-        return minidom.parse(self._sendGet(self.api_urls['status_all']))
+        if filters:
+            filters = [self.filters[filter] for filter in filters]
+        return minidom.parse(self._sendGet(self.api_urls['status_all'], filters))
 
     def getStatusHost(self, filters, host):
         pass
