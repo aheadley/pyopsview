@@ -1,5 +1,6 @@
 #!/usr/bin/python
-import urllib2, urllib
+import urllib2
+from urllib import urlencode
 import xml.dom.minidom as minidom
 
 class OpsviewException(Exception):
@@ -58,7 +59,7 @@ class OpsviewServer(object):
         pass
 
     def _sendGet(self, location, parameters=None, headers=None):
-        request = urllib2.Request('https://%s/%s?%s' % (self.domain, location, urllib.urlencode(parameters or [])))
+        request = urllib2.Request('https://%s/%s?%s' % (self.domain, location, parameters))
         if headers:
             map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
         request.add_header('Content-Type', 'text/xml')
@@ -70,7 +71,7 @@ class OpsviewServer(object):
             return reply
 
     def _sendPost(self, location, data, headers=None):
-        request = urllib2.Request('https://%s/%s' % (self.domain, location), urllib.urlencode(data))
+        request = urllib2.Request('https://%s/%s' % (self.domain, location), urlencode(data))
         if headers:
             map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
         try:
@@ -81,15 +82,24 @@ class OpsviewServer(object):
             return reply
 
     def getStatusAll(self, filters=None):
+        if filters: filters = [self.filters[filter] for filter in filters]
+        return minidom.parse(self._sendGet(self.api_urls['status_all'], urlencode(filters)))
+
+    def getStatusHost(self, host, filters=None):
         if filters:
             filters = [self.filters[filter] for filter in filters]
-        return minidom.parse(self._sendGet(self.api_urls['status_all'], filters))
-
-    def getStatusHost(self, filters, host):
-        pass
+        else:
+            filters = []
+        filters.append(('host', host))
+        return minidom.parse(self._sendGet(self.api_urls['status_host'], urlencode(filters)))
 
     def getStatusService(self, host, service):
-        pass
+        host_xml = self.getStatusHost(host)
+        services = host_xml.getElementsByTagName('services')
+        for svc_iter in services:
+            if svc_iter.getAttribute('name').lower() == service.lower():
+                return svc_iter
+        raise OpsviewException('Service not found: %s:%s' % (host, service))
 
     def getStatusHostgroup(self, hostgroup):
         pass
