@@ -1,25 +1,33 @@
 #!/usr/bin/python
-import httplib
-import urllib
+import urllib2, urllib
+import xml.dom.minidom as minidom
+
+class OpsviewException(Exception):
+    def __init__(self, msg=None):
+        self.msg = msg or 'Unknown Error'
+
+    def __str__(self):
+        return self.msg
 
 class OpsviewServer(object):
-    def __init__(self, domain, username, password, path='/', secure=True):
+    def __init__(self, domain, username, password, path=''):
         self.domain = domain
         self.username = username
         self.password = password
         self.path = path
-        self.port = port
         self.hosts = []
-
         self.api_urls = dict({
             'acknowledge':      '%sstatus/service/acknowledge' % self.path,
-            'status_all':       '%sapi/status/service',
-            'status_service':   '%sapi/status/service',
-            'status_host':      '%sapi/status/service',
-            'status_hostgroup': '%sapi/status/hostgroup',
-            'login':            '%slogin',
-            'api':              '%sapi',
+            'status_all':       '%sapi/status/service' % self.path,
+            'status_service':   '%sapi/status/service' % self.path,
+            'status_host':      '%sapi/status/service' % self.path,
+            'status_hostgroup': '%sapi/status/hostgroup' % self.path,
+            'login':            '%slogin' % self.path,
+            'api':              '%sapi' % self.path,
         })
+
+        self._cookies = urllib2.HTTPCookieProcessor()
+        self._opener = urllib2.build_opener(self._cookies)
 
     def __str__(self):
         return '%s:%i#%s' % (self.domain, self.port, self.path)
@@ -31,7 +39,9 @@ class OpsviewServer(object):
         pass
 
     def _login(self):
-        self._sendPost(self.api_urls['login'], urllib.urlencode(dict({'login':'Log In', 'back':'', 'login_username':self.username, 'login_password':self.password})))
+        if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
+            self._sendPost(self.api_urls['login'], dict({'login':'Log In', 'back':'', 'login_username':self.username, 'login_password':self.password}))
+        assert 'auth_tkt' in [cookie.name for cookie in self._cookies.cookiejar], OpsviewException('Login failed')
 
     def _acknowledge(self, targets, comment, notify, auto_remove_comment):
         pass
@@ -39,30 +49,31 @@ class OpsviewServer(object):
     def _sendXML(self, payload):
         pass
 
-    def _sendGet(self, location, parameters=None, headers=None):
-        if self.secure:
-            connection = httplib.HTTPSConnection(self.host)
+    def _sendGet(self, location, parameters=[], headers=None):
+        request = urllib2.Request('https://%s/%s?%s' % (self.domain, location, urllib.urlencode(parameters)))
+        if headers:
+            map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
+        request.add_header('Content-Type', 'text/xml')
+        try:
+            reply = self._opener.open(request)
+        except urllib2.HTTPError, reply:
+            return reply
         else:
-            connection = httplib.HTTPConnection(self.host)
-        connection.request('GET', location, urllib.urlencode(parameters), headers)
-        response = connection.getresponse()
-        connection.close()
+            return reply
 
-        return response.read()
-
-    def _sendPost(self, location, parameters=None, headers=None):
-        if self.secure:
-            connection = httplib.HTTPSConnection(self.host, self.port)
+    def _sendPost(self, location, data, headers=None):
+        request = urllib2.Request('https://%s/%s' % (self.domain, location), urllib.urlencode(data))
+        if headers:
+            map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
+        try:
+            reply = self._opener.open(request)
+        except urllib2.HTTPError, reply:
+            return reply
         else:
-            connection = httplib.HTTPConnection(self.host, self.port)
-        connection.request('POST', location, urllib.urlencode(parameters), headers)
-        response = connection.getresponse()
-        connection.close()
+            return reply
 
-        return response.read()
-
-    def getStatusAll(self, filters):
-        pass
+    def getStatusAll(self, filters=None):
+        return minidom.parse(self._sendGet(self.api_urls['status_all']))
 
     def getStatusHost(self, filters, host):
         pass
