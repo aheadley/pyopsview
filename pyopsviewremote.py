@@ -1,6 +1,6 @@
 #!/usr/bin/python
 import urllib2
-from urllib import urlencode
+from urllib import urlencode, quote_plus
 import xml.dom.minidom as minidom
 
 class OpsviewException(Exception):
@@ -50,10 +50,18 @@ class OpsviewRemote(object):
         """Attempt to login if there isn't an auth cookie already in the cookiejar"""
 
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
-            self._sendPost(self.api_urls['login'], dict({'login':'Log In', 'back':'', 'login_username':self.username, 'login_password':self.password}))
+            self._sendPost(self.api_urls['login'], urlencode(dict({'login':'Log In', 'back':'', 'login_username':self.username, 'login_password':self.password})))
         assert 'auth_tkt' in [cookie.name for cookie in self._cookies.cookiejar], OpsviewException('Login failed')
 
     def _acknowledge(self, targets, comment=None, notify=True, auto_remove_comment=True):
+        """Send acknowledgements for each target in targets. targets should be a
+        dict with this layout:
+        targets=dict({
+            host1:[list, of, services],
+            host2:[list, again],
+            host3:[None], #None means acknowledge the host itself
+        })"""
+
         data = urlencode(dict({
             'from':     'https://%s/%s' % (self.domain, self.path),
             'submit':   'Submit',
@@ -62,9 +70,8 @@ class OpsviewRemote(object):
             'autoremovecomment':
                         (auto_remove_comment and 'on') or 'off',
         }))
-        data += '&'
         #this makes me feel like a goddamn genius
-        data += '&'.join([urlencode((service and 'service_selection=%s;%s' % (host, service)) or 'host_selection=%s' % host) \
+        data += '&' + '&'.join([(service and 'service_selection=%s' % quote_plus('%s;%s' % (host, service))) or 'host_selection=%s' % quote_plus(host) \
             for host in targets for service in targets[host]])
 
         self.sendPost(self.api_urls['acknowledge'], data)
@@ -129,13 +136,22 @@ class OpsviewRemote(object):
         return minidom.parse(self._sendGet('%s/%s' % (self.api_urls['status_hostgroup'], hostgroup or '')))
 
     def acknowledgeService(self, host, service, comment, notify=True, auto_remove_comment=True):
-        return self._acknowledge(dict({host:[service]}), comment, notify, auto_remove_comment)
+        self._acknowledge(dict({host:[service]}), comment, notify, auto_remove_comment)
 
     def acknowledgeHost(self, host, comment, notify=True, auto_remove_comment=True):
         self._acknowledge(dict({host:[None]}), comment, notify, auto_remove_comment)
 
     def acknowledgeAll(self, comment, notify=True, auto_remove_comment=True):
-        pass
+        status = self._getStatusAll(['warning', 'critical', 'unhandled'])
+        alerting = dict({})
+        for host in status.getElementsByTagName('list'):
+            alerting[host.getAttribute('name')] = []
+            if int(host.getAttribute('current_check_attempt')) == int(host.getAttribute('max_check_attempts')):
+                alerting[host.getAttribute('name')].append(None)
+            for service in host.getElementsByName('services'):
+                if int(service.getAttribute('current_check_attempt')) == int(service.getAttribute('max_check_attempts')):
+                    alerting[host.getAttribute('name')].append(service.getAttribute('name'))
+        self._acknowledge(alerting, comment, notify, auto_remove_comment)
 
     def createHost(self, new_host_name):
         pass
