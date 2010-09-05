@@ -17,13 +17,14 @@ class OpsviewRemote(object):
         self.password = password
         self.path = path
         self.api_urls = dict({
-            'acknowledge':      '%sstatus/service/acknowledge' % self.path,
-            'status_all':       '%sapi/status/service' % self.path,
-            'status_service':   '%sapi/status/service' % self.path,
-            'status_host':      '%sapi/status/service' % self.path,
-            'status_hostgroup': '%sapi/status/hostgroup' % self.path,
-            'login':            '%slogin' % self.path,
-            'api':              '%sapi' % self.path,
+            'acknowledge':          '%sstatus/service/acknowledge' % self.path,
+            'status_all':           '%sapi/status/service' % self.path,
+            'status_service':       '%sapi/status/service' % self.path,
+            'status_host':          '%sapi/status/service' % self.path,
+            'status_byhostgroup':   '%sapi/status/service' % self.path,
+            'status_hostgroup':     '%sapi/status/hostgroup' % self.path,
+            'login':                '%slogin' % self.path,
+            'api':                  '%sapi' % self.path,
         })
 
         self.filters = dict({
@@ -37,6 +38,7 @@ class OpsviewRemote(object):
         self._cookies = urllib2.HTTPCookieProcessor()
         self._opener = urllib2.build_opener(self._cookies)
         self._content_type = 'text/xml'
+        self._login()
 
     def __str__(self):
         return 'https://%s@%s/%s' % (self.username, self.domain, self.path)
@@ -45,17 +47,36 @@ class OpsviewRemote(object):
         return 'ServerRemote %s' % self
 
     def _login(self):
+        """Attempt to login if there isn't an auth cookie already in the cookiejar"""
+
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
             self._sendPost(self.api_urls['login'], dict({'login':'Log In', 'back':'', 'login_username':self.username, 'login_password':self.password}))
         assert 'auth_tkt' in [cookie.name for cookie in self._cookies.cookiejar], OpsviewException('Login failed')
 
-    def _acknowledge(self, targets, comment, notify, auto_remove_comment):
-        pass
+    def _acknowledge(self, targets, comment=None, notify=True, auto_remove_comment=True):
+        data = urlencode(dict({
+            'from':     'https://%s/%s' % (self.domain, self.path),
+            'submit':   'Submit',
+            'comment':  comment,
+            'notify':   (notify and 'on') or 'off',
+            'autoremovecomment':
+                        (auto_remove_comment and 'on') or 'off',
+        }))
+        data += '&'
+        #this makes me feel like a goddamn genius
+        data += '&'.join([urlencode((service and 'service_selection=%s;%s' % (host, service)) or 'host_selection=%s' % host) \
+            for host in targets for service in targets[host]])
+
+        self.sendPost(self.api_urls['acknowledge'], data)
 
     def _sendXML(self, payload):
         pass
 
     def _sendGet(self, location, parameters=None, headers=None):
+        """Send a GET request to the Opsview server/location?parameters
+        and optional headers as a list of tuples.
+        (parameters) should already be urlencoded."""
+
         request = urllib2.Request('https://%s/%s?%s' % (self.domain, location, parameters))
         if headers:
             map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
@@ -68,7 +89,11 @@ class OpsviewRemote(object):
             return reply
 
     def _sendPost(self, location, data, headers=None):
-        request = urllib2.Request('https://%s/%s' % (self.domain, location), urlencode(data))
+        """Send a POST request to the Opsview server/location with data
+        and optional headers as a list of tuples.
+        (data) should already be urlencoded."""
+
+        request = urllib2.Request('https://%s/%s' % (self.domain, location), data)
         if headers:
             map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
         try:
@@ -95,19 +120,19 @@ class OpsviewRemote(object):
                 return svc_iter
         raise OpsviewException('Service not found: %s:%s' % (host, service))
 
-    def getStatusHostgroup(self, hostgroup, filters=[]):
+    def getStatusByHostgroup(self, hostgroup, filters=[]):
         filters = [self.filters[filter] for filter in filters]
-        return minidom.parse(self._sendGet('%s/%i' % (self.api_urls['status_hostgroup'], hostgroup), urlencode(filters)))
-
-    def getStatusHostgroups(self, filters):
-        filters = [self.filters[filter] for filter in filters]
+        filters.append(('hostgroupid', int(hostgroup)))
         return minidom.parse(self._sendGet(self.api_urls['status_hostgroup'], urlencode(filters)))
 
+    def getStatusHostgroup(self, hostgroup=None):
+        return minidom.parse(self._sendGet('%s/%s' % (self.api_urls['status_hostgroup'], hostgroup or '')))
+
     def acknowledgeService(self, host, service, comment, notify=True, auto_remove_comment=True):
-        pass
+        return self._acknowledge(dict({host:[service]}), comment, notify, auto_remove_comment)
 
     def acknowledgeHost(self, host, comment, notify=True, auto_remove_comment=True):
-        pass
+        self._acknowledge(dict({host:[None]}), comment, notify, auto_remove_comment)
 
     def acknowledgeAll(self, comment, notify=True, auto_remove_comment=True):
         pass
