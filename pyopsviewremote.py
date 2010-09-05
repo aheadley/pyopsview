@@ -36,6 +36,7 @@ class OpsviewRemote(object):
 
         self._cookies = urllib2.HTTPCookieProcessor()
         self._opener = urllib2.build_opener(self._cookies)
+        self._content_type = 'text/xml'
 
     def __str__(self):
         return 'https://%s@%s/%s' % (self.username, self.domain, self.path)
@@ -58,7 +59,7 @@ class OpsviewRemote(object):
         request = urllib2.Request('https://%s/%s?%s' % (self.domain, location, parameters))
         if headers:
             map(lambda header_key: request.add_header(header_key, headers[header_key]), headers)
-        request.add_header('Content-Type', 'text/xml')
+        request.add_header('Content-Type', self._content_type)
         try:
             reply = self._opener.open(request)
         except urllib2.HTTPError, reply:
@@ -77,15 +78,12 @@ class OpsviewRemote(object):
         else:
             return reply
 
-    def getStatusAll(self, filters=None):
-        if filters: filters = [self.filters[filter] for filter in filters]
+    def getStatusAll(self, filters=[]):
+        filters = [self.filters[filter] for filter in filters]
         return minidom.parse(self._sendGet(self.api_urls['status_all'], urlencode(filters)))
 
-    def getStatusHost(self, host, filters=None):
-        if filters:
-            filters = [self.filters[filter] for filter in filters]
-        else:
-            filters = []
+    def getStatusHost(self, host, filters=[]):
+        filters = [self.filters[filter] for filter in filters]
         filters.append(('host', host))
         return minidom.parse(self._sendGet(self.api_urls['status_host'], urlencode(filters)))
 
@@ -97,12 +95,12 @@ class OpsviewRemote(object):
                 return svc_iter
         raise OpsviewException('Service not found: %s:%s' % (host, service))
 
-    def getStatusHostgroup(self, hostgroup, filters=None):
-        if filters: filters = [self.filters[filter] for filter in filters]
+    def getStatusHostgroup(self, hostgroup, filters=[]):
+        filters = [self.filters[filter] for filter in filters]
         return minidom.parse(self._sendGet('%s/%i' % (self.api_urls['status_hostgroup'], hostgroup), urlencode(filters)))
 
-    def getStatusHostgroups(self, filters=None):
-        if filters: filters = [self.filters[filter] for filter in filters]
+    def getStatusHostgroups(self, filters):
+        filters = [self.filters[filter] for filter in filters]
         return minidom.parse(self._sendGet(self.api_urls['status_hostgroup'], urlencode(filters)))
 
     def acknowledgeService(self, host, service, comment, notify=True, auto_remove_comment=True):
@@ -117,7 +115,7 @@ class OpsviewRemote(object):
     def createHost(self, new_host_name):
         pass
 
-    def cloneHost(self, new_host_name, old_host_name):
+    def cloneHost(self, old_host_name, new_host_name):
         pass
 
     def createHost(self, host):
