@@ -10,13 +10,12 @@ class OpsviewException(Exception):
     def __str__(self):
         return self.msg
 
-class OpsviewServer(object):
+class OpsviewRemote(object):
     def __init__(self, domain, username, password, path=''):
         self.domain = domain
         self.username = username
         self.password = password
         self.path = path
-        self.hosts = []
         self.api_urls = dict({
             'acknowledge':      '%sstatus/service/acknowledge' % self.path,
             'status_all':       '%sapi/status/service' % self.path,
@@ -39,13 +38,10 @@ class OpsviewServer(object):
         self._opener = urllib2.build_opener(self._cookies)
 
     def __str__(self):
-        return '%s:%i#%s' % (self.domain, self.port, self.path)
+        return 'https://%s@%s/%s' % (self.username, self.domain, self.path)
 
     def __repr__(self):
-        return 'Server %s' % self
-
-    def _connect(self):
-        pass
+        return 'ServerRemote %s' % self
 
     def _login(self):
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
@@ -101,8 +97,13 @@ class OpsviewServer(object):
                 return svc_iter
         raise OpsviewException('Service not found: %s:%s' % (host, service))
 
-    def getStatusHostgroup(self, hostgroup):
-        pass
+    def getStatusHostgroup(self, hostgroup, filters=None):
+        if filters: filters = [self.filters[filter] for filter in filters]
+        return minidom.parse(self._sendGet('%s/%i' % (self.api_urls['status_hostgroup'], hostgroup), urlencode(filters)))
+
+    def getStatusHostgroups(self, filters=None):
+        if filters: filters = [self.filters[filter] for filter in filters]
+        return minidom.parse(self._sendGet(self.api_urls['status_hostgroup'], urlencode(filters)))
 
     def acknowledgeService(self, host, service, comment, notify=True, auto_remove_comment=True):
         pass
@@ -125,6 +126,17 @@ class OpsviewServer(object):
     def reload(self):
         pass
 
+class OpsviewServer(object):
+    def __init__(self, name, hosts=None):
+        self.name = name
+        self.hosts = hosts or []
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return 'Server: %s (%i Hosts)' % (self.name, len(self.hosts))
+
 class OpsviewHost(object):
     def __init__(self, name, services=None):
         self.name = name
@@ -135,7 +147,7 @@ class OpsviewHost(object):
         return self.name
 
     def __repr__(self):
-        return 'Host %s (%s)' & (self.name, self.services)
+        return 'Host %s (%i Services)' & (self.name, len(self.services))
 
 class OpsviewService(object):
     def __init__(self, host, name):
