@@ -254,15 +254,36 @@ class OpsviewRemote(object):
         self._sendXML(minidom.parseString(doc))
 
 class OpsviewServer(object):
-    def __init__(self, name, hosts=None):
+    def __init__(self, name, hosts=None, remote=None):
         self.name = name
         self.hosts = hosts or []
+        self.remote = remote
+
+        assert isinstance(remote, OpsviewRemote)
 
     def __str__(self):
         return self.name
 
     def __repr__(self):
-        return 'Server: %s (%i Hosts)' % (self.name, len(self.hosts))
+        return 'Server: %s (%i Hosts) # %s' % (self.name, len(self.hosts), self.remote)
+
+    def update(self, filters=None):
+        #this will (probably) leak memory, need to make unlink function or something
+        hosts = []
+        self.fromXML(self.remote.getStatusAll(filters))
+
+    def refresh(self):
+        self.fromXML(self.remote.getStatusAll())
+
+    def fromXML(self, src_xml):
+        if isinstance(src_xml, str):
+            src_xml = minidom.parseString(src_xml)
+        elif isinstance(src_xml, file):
+            src_xml = minidom.parse(src_xml)
+        assert isinstance(src_xml, minidom.Node)
+
+        for host in src_xml.getElementsByTagName('list'):
+            pass
 
 class OpsviewHost(object):
     def __init__(self, name, services=None):
@@ -275,6 +296,13 @@ class OpsviewHost(object):
 
     def __repr__(self):
         return 'Host %s (%i Services)' & (self.name, len(self.services))
+
+    def fromXML(self, src_xml):
+        if isinstance(src_xml, str):
+            src_xml = minidom.parseString(src_xml)
+        elif isinstance(src_xml, file):
+            src_xml = minidom.parse(src_xml)
+        assert isinstance(src_xml, minidom.Document)
 
 class OpsviewService(object):
     def __init__(self, host, name):
@@ -289,6 +317,13 @@ class OpsviewService(object):
 
     def __repr__(self):
         return 'Service %s' % self.name
+
+    def fromXML(self, src_xml):
+        if isinstance(src_xml, str):
+            src_xml = minidom.parseString(src_xml)
+        elif isinstance(src_xml, file):
+            src_xml = minidom.parse(src_xml)
+        assert isinstance(src_xml, minidom.Document)
 
 if __name__ == '__main__':
     #tests go here
