@@ -124,12 +124,18 @@ class OpsviewRemote(object):
         else:
             return reply
 
-    def getStatusAll(self, filters=[]):
-        filters = [self.filters[filter] for filter in filters]
+    def getStatusAll(self, filters=None):
+        if not filters:
+            filters = []
+        else:
+            filters = [self.filters[filter] for filter in filters]
         return minidom.parse(self._sendGet(self.api_urls['status_all'], urlencode(filters)))
 
-    def getStatusHost(self, host, filters=[]):
-        filters = [self.filters[filter] for filter in filters]
+    def getStatusHost(self, host, filters=None):
+        if not filters:
+            filters = []
+        else:
+            filters = [self.filters[filter] for filter in filters]
         filters.append(('host', host))
         return minidom.parse(self._sendGet(self.api_urls['status_host'], urlencode(filters)))
 
@@ -141,10 +147,13 @@ class OpsviewRemote(object):
                 return svc_iter
         raise OpsviewException('Service not found: %s:%s' % (host, service))
 
-    def getStatusByHostgroup(self, hostgroup, filters=[]):
+    def getStatusByHostgroup(self, hostgroup, filters=None):
         """Get status of hosts by the hostgroup they are in."""
 
-        filters = [self.filters[filter] for filter in filters]
+        if not filters:
+            filters = []
+        else:
+            filters = [self.filters[filter] for filter in filters]
         filters.append(('hostgroupid', int(hostgroup)))
         return minidom.parse(self._sendGet(self.api_urls['status_hostgroup'], urlencode(filters)))
 
@@ -254,7 +263,7 @@ class OpsviewRemote(object):
         self._sendXML(minidom.parseString(doc))
 
 class OpsviewServer(object):
-    def __init__(self, src_xml=None, remote=None):
+    def __init__(self, src_xml=None, remote=None, filters=None):
         self.hosts = []
         self.remote = remote
 
@@ -263,15 +272,10 @@ class OpsviewServer(object):
         if src_xml:
             self.parse(src_xml)
         else:
-            self.parse(remote.getStatusAll())
+            self.parse(self.remote.getStatusAll(filters))
 
     def update(self, filters=None):
-        #this will (probably) leak memory, need to make unlink function or something
-        hosts = []
         self.parse(self.remote.getStatusAll(filters))
-
-    def refresh(self):
-        self.parse(self.remote.getStatusAll())
 
     def parse(self, src_xml):
         if isinstance(src_xml, str):
@@ -280,18 +284,22 @@ class OpsviewServer(object):
             src_xml = minidom.parse(src_xml)
         assert isinstance(src_xml, minidom.Node)
 
+        #this will (probably) leak memory, need to make unlink method or something
         self.hosts = map(
             lambda host_node: OpsviewHost(self, src_xml=host_node),
             src_xml.getElementsByTagName('list')
         )
 
-class OpsviewHost(object):
+class OpsviewHost(dict):
     def __init__(self, server, src_xml=None):
         self.server = server
         self.services = []
-        self.attr = dict({})
         if src_xml:
             self.parse(src_xml)
+        assert isinstance(self.server, OpsviewServer)
+
+    def update(self, filters=None):
+        self.parse(self.server.remote.getStatusHost(self['name'], filters))
 
     def parse(self, src_xml):
         if isinstance(src_xml, str):
@@ -300,24 +308,29 @@ class OpsviewHost(object):
             src_xml = minidom.parse(src_xml)
         assert isinstance(src_xml, minidom.Node)
 
-        #for attribute in src_xml.attributes:
+        if not (hasattr(src_xml, 'tagName') and src_xml.tagName == 'list'):
+            src_xml = src_xml.getElementsByTagName('list')[0]
+
         for i in range(src_xml.attributes.length):
             try:
-                self.attr[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
+                self[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
             except ValueError:
-                self.attr[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
+                self[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
 
         self.services = map(
             lambda service_node: OpsviewService(self, src_xml=service_node),
             src_xml.getElementsByTagName('services')
         )
 
-class OpsviewService(object):
+class OpsviewService(dict):
     def __init__(self, host, src_xml=None):
         self.host = host
-        self.attr = dict({})
         if src_xml:
             self.parse(src_xml)
+        assert isinstance(self.host, OpsviewHost)
+
+    def update(self):
+        self.parse(self.host.server.remote.getStatusService(self.host['name'], self['name']))
 
     def parse(self, src_xml):
         if isinstance(src_xml, str):
@@ -326,11 +339,14 @@ class OpsviewService(object):
             src_xml = minidom.parse(src_xml)
         assert isinstance(src_xml, minidom.Node)
 
+        if not (hasattr(src_xml, 'tagName') and src_xml.tagName == 'services'):
+            src_xml = src_xml.getElementsByTagName('services')[0]
+
         for i in range(src_xml.attributes.length):
             try:
-                self.attr[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
+                self[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
             except ValueError:
-                self.attr[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
+                self[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
 
 if __name__ == '__main__':
     #tests go here
