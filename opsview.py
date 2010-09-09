@@ -254,76 +254,83 @@ class OpsviewRemote(object):
         self._sendXML(minidom.parseString(doc))
 
 class OpsviewServer(object):
-    def __init__(self, name, hosts=None, remote=None):
-        self.name = name
-        self.hosts = hosts or []
+    def __init__(self, src_xml=None, remote=None):
+        self.hosts = []
         self.remote = remote
 
-        assert isinstance(remote, OpsviewRemote)
+        assert src_xml or self.remote, OpsviewException('No source to populate object')
 
-    def __str__(self):
-        return self.name
-
-    def __repr__(self):
-        return 'Server: %s (%i Hosts) # %s' % (self.name, len(self.hosts), self.remote)
+        if src_xml:
+            self.parse(src_xml)
+        else:
+            self.parse(remote.getStatusAll())
 
     def update(self, filters=None):
         #this will (probably) leak memory, need to make unlink function or something
         hosts = []
-        self.fromXML(self.remote.getStatusAll(filters))
+        self.parse(self.remote.getStatusAll(filters))
 
     def refresh(self):
-        self.fromXML(self.remote.getStatusAll())
+        self.parse(self.remote.getStatusAll())
 
-    def fromXML(self, src_xml):
+    def parse(self, src_xml):
         if isinstance(src_xml, str):
             src_xml = minidom.parseString(src_xml)
         elif isinstance(src_xml, file):
             src_xml = minidom.parse(src_xml)
         assert isinstance(src_xml, minidom.Node)
 
-        for host in src_xml.getElementsByTagName('list'):
-            pass
+        self.hosts = map(
+            lambda host_node: OpsviewHost(self, src_xml=host_node),
+            src_xml.getElementsByTagName('list')
+        )
 
 class OpsviewHost(object):
-    def __init__(self, name, services=None):
-        self.name = name
-        self.alias = None
-        self.services = services or []
+    def __init__(self, server, src_xml=None):
+        self.server = server
+        self.services = []
+        self.attr = dict({})
+        if src_xml:
+            self.parse(src_xml)
 
-    def __str__(self):
-        return self.name
-
-    def __repr__(self):
-        return 'Host %s (%i Services)' & (self.name, len(self.services))
-
-    def fromXML(self, src_xml):
+    def parse(self, src_xml):
         if isinstance(src_xml, str):
             src_xml = minidom.parseString(src_xml)
         elif isinstance(src_xml, file):
             src_xml = minidom.parse(src_xml)
-        assert isinstance(src_xml, minidom.Document)
+        assert isinstance(src_xml, minidom.Node)
+
+        #for attribute in src_xml.attributes:
+        for i in range(src_xml.attributes.length):
+            try:
+                self.attr[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
+            except ValueError:
+                self.attr[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
+
+        self.services = map(
+            lambda service_node: OpsviewService(self, src_xml=service_node),
+            src_xml.getElementsByTagName('services')
+        )
 
 class OpsviewService(object):
-    def __init__(self, host, name):
-        self.name = name
-        self.downtime = None
-        self.max_check_attempts = None
-        self.current_check_attempts = None
-        self.state_duration = None
+    def __init__(self, host, src_xml=None):
+        self.host = host
+        self.attr = dict({})
+        if src_xml:
+            self.parse(src_xml)
 
-    def __str__(self):
-        return self.name
-
-    def __repr__(self):
-        return 'Service %s' % self.name
-
-    def fromXML(self, src_xml):
+    def parse(self, src_xml):
         if isinstance(src_xml, str):
             src_xml = minidom.parseString(src_xml)
         elif isinstance(src_xml, file):
             src_xml = minidom.parse(src_xml)
-        assert isinstance(src_xml, minidom.Document)
+        assert isinstance(src_xml, minidom.Node)
+
+        for i in range(src_xml.attributes.length):
+            try:
+                self.attr[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
+            except ValueError:
+                self.attr[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
 
 if __name__ == '__main__':
     #tests go here
