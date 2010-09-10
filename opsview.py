@@ -84,12 +84,12 @@ class OpsviewRemote(object):
             or 'host_selection=%s' % quote_plus(host) \
             for host in targets for service in targets[host]])
 
-        self.sendPost(self.api_urls['acknowledge'], data)
+        return self.sendPost(self.api_urls['acknowledge'], data)
 
     def _sendXML(self, payload):
         """Send payload (an xml Document object) to the api url via POST."""
 
-        self._sendPost(self.api_urls['api'], payload.toxml(), dict({'Content-Type':'text/xml'}))
+        return minidom.parse(self._sendPost(self.api_urls['api'], payload.toxml(), dict({'Content-Type':'text/xml'})))
 
     def _sendGet(self, location, parameters=None, headers=None):
         """Send a GET request to the Opsview server/location?parameters
@@ -164,10 +164,10 @@ class OpsviewRemote(object):
         return minidom.parse(self._sendGet('%s/%s' % (self.api_urls['status_hostgroup'], hostgroup or '')))
 
     def acknowledgeService(self, host, service, comment, notify=True, auto_remove_comment=True):
-        self._acknowledge(dict({host:[service]}), comment, notify, auto_remove_comment)
+        return self._acknowledge(dict({host:[service]}), comment, notify, auto_remove_comment)
 
     def acknowledgeHost(self, host, comment, notify=True, auto_remove_comment=True):
-        self._acknowledge(dict({host:[None]}), comment, notify, auto_remove_comment)
+        return self._acknowledge(dict({host:[None]}), comment, notify, auto_remove_comment)
 
     def acknowledgeAll(self, comment, notify=True, auto_remove_comment=True):
         """Acknowledge all currently alerting (at max_check_attempts) services"""
@@ -181,10 +181,16 @@ class OpsviewRemote(object):
             for service in host.getElementsByName('services'):
                 if int(service.getAttribute('current_check_attempt')) == int(service.getAttribute('max_check_attempts')):
                     alerting[host.getAttribute('name')].append(service.getAttribute('name'))
-        self._acknowledge(alerting, comment, notify, auto_remove_comment)
+        return self._acknowledge(alerting, comment, notify, auto_remove_comment)
 
-    def createHost(self, new_host_name):
-        pass
+    def createHost(self, **attrs):
+        xml = """<opsview>
+            <host action="create">
+                %s
+            </host>
+        </opsview>"""
+
+        return self._sendXML(minidom.parseString(xml % (''.join(['<%s>%s</%s>' % (key, attrs[key], key) for key in attrs]))))
 
     def cloneHost(self, old_host_name, new_host_name):
         xml = """<opsview>
@@ -196,7 +202,7 @@ class OpsviewRemote(object):
             </host>
         </opsview>"""
 
-        self._sendXML(minidom.parseString(xml % (old_host_name, new_host_name)))
+        return self._sendXML(minidom.parseString(xml % (old_host_name, new_host_name)))
 
     def deleteHost(self, host):
         """Delete a host by name or ID number"""
@@ -206,7 +212,7 @@ class OpsviewRemote(object):
         </opsview>"""
         method= (host.isdigit() and 'id') or 'name'
 
-        self._sendXML(minidom.parseString(doc % (method, host)))
+        return self._sendXML(minidom.parseString(doc % (method, host)))
 
     def scheduleDowntime(self, hostgroup, start_time, end_time, comment):
         doc = """<opsview>
@@ -221,7 +227,7 @@ class OpsviewRemote(object):
         </opsview>"""
         method= (hostgroup.isdigit() and 'id') or 'name'
 
-        self._sendXML(minidom.parseString(doc % (method, hostgroup, start_time, end_time, comment)))
+        return self._sendXML(minidom.parseString(doc % (method, hostgroup, start_time, end_time, comment)))
 
     def disableScheduledDowntime(self, hostgroup):
         doc = """<opsview>
@@ -231,7 +237,7 @@ class OpsviewRemote(object):
         </opsview>"""
         method= (hostgroup.isdigit() and 'id') or 'name'
 
-        self._sendXML(minidom.parseString(doc % (method, hostgroup)))
+        return self._sendXML(minidom.parseString(doc % (method, hostgroup)))
 
     def enableNotifications(self, hostgroup):
         doc = """<opsview>
@@ -241,7 +247,7 @@ class OpsviewRemote(object):
         </opsview>"""
         method = (hostgroup.isdigit() and 'id') or 'name'
 
-        self._sendXML(minidom.parseString(doc % (method, hostgroup)))
+        return self._sendXML(minidom.parseString(doc % (method, hostgroup)))
 
     def disableNotifications(self, hostgroup):
         doc = """<opsview>
@@ -251,7 +257,7 @@ class OpsviewRemote(object):
         </opsview>"""
         method = (hostgroup.isdigit() and 'id') or 'name'
 
-        self._sendXML(minidom.parseString(doc % (method, hostgroup)))
+        return self._sendXML(minidom.parseString(doc % (method, hostgroup)))
 
     def reload(self):
         """Reload the remote Opsview server's configuration."""
@@ -260,7 +266,7 @@ class OpsviewRemote(object):
             <system action="reload"/>
         </opsview>"""
 
-        self._sendXML(minidom.parseString(doc))
+        return self._sendXML(minidom.parseString(doc))
 
 class OpsviewServer(object):
     def __init__(self, src_xml=None, remote=None, filters=None):
