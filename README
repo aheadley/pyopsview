@@ -1,0 +1,3 @@
+pyOpsview is a collection of utilites and classes for interacting with an Opsview
+server (pretty much just the API for now). I should probably add some other info
+here.
