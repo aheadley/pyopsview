@@ -87,7 +87,7 @@ class OpsviewRemote(object):
         return self.sendPost(self.api_urls['acknowledge'], data)
 
     def _sendXML(self, payload):
-        """Send payload (an xml Document object) to the api url via POST."""
+        """Send payload (an xml Node object) to the api url via POST."""
 
         return minidom.parse(self._sendPost(self.api_urls['api'], payload.toxml(), dict({'Content-Type':'text/xml'})))
 
@@ -250,6 +250,8 @@ class OpsviewRemote(object):
         return self._sendXML(minidom.parseString(doc % (method, hostgroup)))
 
     def disableNotifications(self, hostgroup):
+    	"""Disable notifications for a leaf hostgroup by id or name."""
+    	
         doc = """<opsview>
             <hostgroup action="change" by_%s="%s">
                 <notifications>disable</notifications>
@@ -282,6 +284,7 @@ class OpsviewServer(object):
 
     def update(self, filters=None):
         self.parse(self.remote.getStatusAll(filters))
+        return self
 
     def parse(self, src_xml):
         if isinstance(src_xml, str):
@@ -295,6 +298,7 @@ class OpsviewServer(object):
             lambda host_node: OpsviewHost(self, src_xml=host_node),
             src_xml.getElementsByTagName('list')
         )
+        return self
 
 class OpsviewHost(dict):
     def __init__(self, server, src_xml=None):
@@ -306,6 +310,7 @@ class OpsviewHost(dict):
 
     def update(self, filters=None):
         self.parse(self.server.remote.getStatusHost(self['name'], filters))
+        return self
 
     def parse(self, src_xml):
         if isinstance(src_xml, str):
@@ -327,6 +332,7 @@ class OpsviewHost(dict):
             lambda service_node: OpsviewService(self, src_xml=service_node),
             src_xml.getElementsByTagName('services')
         )
+        return self
 
 class OpsviewService(dict):
     def __init__(self, host, src_xml=None):
@@ -337,6 +343,7 @@ class OpsviewService(dict):
 
     def update(self):
         self.parse(self.host.server.remote.getStatusService(self.host['name'], self['name']))
+        return self
 
     def parse(self, src_xml):
         if isinstance(src_xml, str):
@@ -353,7 +360,4 @@ class OpsviewService(dict):
                 self[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
             except ValueError:
                 self[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
-
-if __name__ == '__main__':
-    #tests go here
-    pass
+        return self
