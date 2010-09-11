@@ -5,16 +5,16 @@ import urllib2
 import xml.dom.minidom as minidom
 
 
-def _dict_to_xml_string(target):
-    xml_string_list = [
+def _dict_to_xml(target):
+    element_list = [
         '<%s>%s</%s>' % (
             key,
-            (isinstance(target[key], dict) and _dict_to_xml_string(target[key])) or
+            (isinstance(target[key], dict) and _dict_to_xml(target[key])) or
                 target[key],
             key
         ) for key in target
     ]
-    return ''.join(xml_string_list)
+    return ''.join(element_list)
 
 class OpsviewException(Exception):
     """Basic exception."""
@@ -50,7 +50,7 @@ class OpsviewRemote(object):
     })
 
     def __init__(self, base_url, username, password):
-        self.base_url   = base_url
+        self.base_url = base_url
         self.username = username
         self.password = password
         self._cookies = urllib2.HTTPCookieProcessor()
@@ -76,7 +76,7 @@ class OpsviewRemote(object):
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
             try:
                 self._opener.open(
-                    urllib2.Request(''.join([self.base_url, OpsviewRemote.api_urls['login']]),
+                    urllib2.Request(self.base_url + OpsviewRemote.api_urls['login'],
                     urlencode(dict({
                         'login':'Log In',
                         'back':self.base_url,
@@ -125,10 +125,7 @@ class OpsviewRemote(object):
             payload.toxml(), dict({'Content-Type':'text/xml'})))
 
     def _send_get(self, location, parameters=None, headers=None):
-        request = urllib2.Request(
-            '?'.join([''.join([self.base_url, location]),
-            parameters])
-        )
+        request = urllib2.Request('%s?%s' % (self.base_url + location, parameters))
         if headers is not None:
             map(
                 lambda header_key: request.add_header(header_key, headers[header_key]),
@@ -144,7 +141,7 @@ class OpsviewRemote(object):
             return reply
 
     def _send_post(self, location, data, headers=None):
-        request = urllib2.Request(''.join([self.base_url, location]), data)
+        request = urllib2.Request(self.base_url + location, data)
         if headers is not None:
             map(
                 lambda header_key: request.add_header(header_key, headers[header_key]),
@@ -195,7 +192,7 @@ class OpsviewRemote(object):
         for svc_iter in services:
             if svc_iter.getAttribute('name').lower() == service.lower():
                 return svc_iter
-        raise OpsviewException('Service not found: %s:%s' % (host, service))
+        raise OpsviewException('Service not found: %s.%s' % (host, service))
 
     def get_status_by_hostgroup(self, hostgroup, filters=None):
         """Get status of the hosts in a hostgroup..
@@ -270,7 +267,7 @@ class OpsviewRemote(object):
         </opsview>"""
 
         return self._send_xml(minidom.parseString(xml %
-            (_dict_to_xml_string(attrs))))
+            (_dict_to_xml(attrs))))
 
     def clone_host(self, old_host_name, **attrs):
         """Create a new host by cloning an old one.
@@ -289,7 +286,7 @@ class OpsviewRemote(object):
         </opsview>"""
 
         return self._send_xml(minidom.parseString(xml %
-            (old_host_name, _dict_to_xml_string(attrs))))
+            (old_host_name, _dict_to_xml(attrs))))
 
     def delete_host(self, host):
         """Delete a host by name or ID number."""
@@ -379,17 +376,25 @@ class OpsviewRemote(object):
         return self._send_xml(minidom.parseString(xml))
 
 class OpsviewNode(dict):
-    def __init__(self, parent=None, remote=None):
-        self._parent = parent
-        self._children = []
-        self._remote = remote
+    def __init__(self, parent=None, remote=None, src=None, **remote_login):
+        self.parent = parent
+        self.children = None
+        self.remote = remote
 
-        remote_search = self._parent
-        while self._remote is None and remote_search is not None:
-            self.remote = remote_search._remote
-        if self._remote is None:
+        if isinstance(remote, OpsviewRemote):
+            self.remote = remote
+        elif all(map(lambda x: x in remote_login, ['base_url', 'username', 'password'])):
+            self.remote = OpsviewRemote(**remote_login)
+        else:
+            remote_search = self.parent
+            while self.remote is None and remote_search is not None:
+                self.remote = remote_search.remote
+                remote_search = remote_search.parent
+        if self.remote is None:
             raise OpsviewError('%s couldn\'t find a remote to use.' %
                 self)
+        if src is not None:
+            self.parse_xml(src)
 
     def __str__(self):
         try:
@@ -400,7 +405,7 @@ class OpsviewNode(dict):
     def update(self, filters=None):
         raise NotImplementedError()
 
-    def parse_xml(self, src, child_type):
+    def parse_xml(self, src):
         if isinstance(src, basestring):
             src = minidom.parseString(src)
         elif isinstance(src, file):
@@ -408,47 +413,48 @@ class OpsviewNode(dict):
         assert isinstance(src, minidom.Node)
 
         if not (hasattr(src, 'tagName') and
-            src.tagName == child_type.status_xml_element_name):
-            src = src.getElementsByTagName(child_type.status_xml_element_name)[0]
+            src.tagName == self.__class__.status_xml_element_name):
+            src = src.getElementsByTagName(self.__class__.status_xml_element_name)[0]
         for i in range(src.attributes.length):
             try:
                 self[src.attributes.item(i).name] = int(src.attributes.item(i).value)
             except ValueError:
                 self[src.attributes.item(i).name] = src.attributes.item(i).value
-        self._children = map(
-            lambda node: child_type(self, src=node),
-            src.getElementsByTagName(child_type.status_xml_element_name)
-        )
+        if self.__class__.child_type is not None:
+            self.children = map(
+                lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
+                src.getElementsByTagName(self.__class__.child_type.status_xml_element_name)
+            )
 
-class OpsviewServer(OpsviewNode):
-
-    status_xml_element_name = 'data'
-
-    def __init__(self, remote=None, **remote_login):
-        if isinstance(remote, OpsviewRemote):
-            self._remote = remote
-        else:
-            self._remote = OpsviewRemote(*remote_login)
-
-    def update(self, filters=None):
-        self.parse_xml(self._remote.get_status_all(filters))
-        return self
-
-class OpsviewHost(OpsviewNode):
-    
-    status_xml_element_name = 'list'
-    
-    def update(self, filters=None):
-        self.parse_xml(self._remote.get_status_host(self['name'], filters))
-        return self
+    def to_xml(self):
+        return _dict_to_xml(dict({self.__class__.status_xml_element_name:self}))
 
 class OpsviewService(OpsviewNode):
 
     status_xml_element_name = 'services'
+    child_type = None
 
     def update(self):
-        self.parse_xml(self._remote.get_status_service(
-            self._parent['name'],
+        self.parse_xml(self.remote.get_status_service(
+            self.parent['name'],
             self['name']
         ))
+        return self
+
+class OpsviewHost(OpsviewNode):
+
+    status_xml_element_name = 'list'
+    child_type = OpsviewService
+
+    def update(self, filters=None):
+        self.parse_xml(self.remote.get_status_host(self['name'], filters))
+        return self
+
+class OpsviewServer(OpsviewNode):
+
+    status_xml_element_name = 'data'
+    child_type = OpsviewHost
+
+    def update(self, filters=None):
+        self.parse_xml(self.remote.get_status_all(filters))
         return self
