@@ -9,8 +9,7 @@ def _dict_to_xml_string(target):
     xml_string_list = [
         '<%s>%s</%s>' % (
             key,
-            (isinstance(target[key], dict) and
-                _dict_to_xml_string(target[key])) or
+            (isinstance(target[key], dict) and _dict_to_xml_string(target[key])) or
                 target[key],
             key
         ) for key in target
@@ -379,106 +378,77 @@ class OpsviewRemote(object):
 
         return self._send_xml(minidom.parseString(xml))
 
-class OpsviewServer(object):
-    """Logical server object."""
+class OpsviewNode(dict):
+    def __init__(self, parent=None, remote=None):
+        self._parent = parent
+        self._children = []
+        self._remote = remote
 
-    def __init__(self, src_xml=None, remote=None, filters=None):
-        self.hosts = []
-        self.remote = remote
+        remote_search = self._parent
+        while self._remote is None and remote_search is not None:
+            self.remote = remote_search._remote
+        if self._remote is None:
+            raise OpsviewError('%s couldn\'t find a remote to use.' %
+                self)
 
-        assert src_xml is not None or self.remote is not None, \
-            OpsviewException('No source to populate object')
-
-        if src_xml is not None:
-            self.parse(src_xml)
-        else:
-            self.parse(self.remote.get_status_all(filters))
-
-    def update(self, filters=None):
-        self.parse(self.remote.get_status_all(filters))
-
-        return self
-
-    def parse(self, src_xml):
-        if isinstance(src_xml, basestring):
-            src_xml = minidom.parseString(src_xml)
-        elif isinstance(src_xml, file):
-            src_xml = minidom.parse(src_xml)
-        assert isinstance(src_xml, minidom.Node)
-
-        self.hosts = map(
-            lambda host_node: OpsviewHost(self, src_xml=host_node),
-            src_xml.getElementsByTagName('list')
-        )
-
-        return self
-
-class OpsviewHost(dict):
-    """Logical host object."""
-
-    def __init__(self, server, src_xml=None):
-        self.server = server
-        self.services = []
-        if src_xml is not None:
-            self.parse(src_xml)
-        assert isinstance(self.server, OpsviewServer)
+    def __str__(self):
+        try:
+            return '%s(%s)' % (self.__class__.__name__, self['name'])
+        except KeyError:
+            return '%s()' % (self.__class__.__name__)
 
     def update(self, filters=None):
-        self.parse(self.server.remote.get_status_host(self['name'], filters))
+        raise NotImplementedError()
 
-        return self
+    def parse_xml(self, src, child_type):
+        if isinstance(src, basestring):
+            src = minidom.parseString(src)
+        elif isinstance(src, file):
+            src = minidom.parse(src)
+        assert isinstance(src, minidom.Node)
 
-    def parse(self, src_xml):
-        if isinstance(src_xml, basestring):
-            src_xml = minidom.parseString(src_xml)
-        elif isinstance(src_xml, file):
-            src_xml = minidom.parse(src_xml)
-        assert isinstance(src_xml, minidom.Node)
-
-        if not (hasattr(src_xml, 'tagName') and src_xml.tagName == 'list'):
-            src_xml = src_xml.getElementsByTagName('list')[0]
-
-        for i in range(src_xml.attributes.length):
+        if not (hasattr(src, 'tagName') and
+            src.tagName == child_type.status_xml_element_name):
+            src = src.getElementsByTagName(child_type.status_xml_element_name)[0]
+        for i in range(src.attributes.length):
             try:
-                self[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
+                self[src.attributes.item(i).name] = int(src.attributes.item(i).value)
             except ValueError:
-                self[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
-
-        self.services = map(
-            lambda service_node: OpsviewService(self, src_xml=service_node),
-            src_xml.getElementsByTagName('services')
+                self[src.attributes.item(i).name] = src.attributes.item(i).value
+        self._children = map(
+            lambda node: child_type(self, src=node),
+            src.getElementsByTagName(child_type.status_xml_element_name)
         )
 
+class OpsviewServer(OpsviewNode):
+
+    status_xml_element_name = 'data'
+
+    def __init__(self, remote=None, **remote_login):
+        if isinstance(remote, OpsviewRemote):
+            self._remote = remote
+        else:
+            self._remote = OpsviewRemote(*remote_login)
+
+    def update(self, filters=None):
+        self.parse_xml(self._remote.get_status_all(filters))
         return self
 
-class OpsviewService(dict):
-    """Logical service object."""
+class OpsviewHost(OpsviewNode):
+    
+    status_xml_element_name = 'list'
+    
+    def update(self, filters=None):
+        self.parse_xml(self._remote.get_status_host(self['name'], filters))
+        return self
 
-    def __init__(self, host, src_xml=None):
-        self.host = host
-        if src_xml is not None:
-            self.parse(src_xml)
-        assert isinstance(self.host, OpsviewHost)
+class OpsviewService(OpsviewNode):
+
+    status_xml_element_name = 'services'
 
     def update(self):
-        self.parse(self.host.server.remote.get_status_service(self.host['name'], self['name']))
-
-        return self
-
-    def parse(self, src_xml):
-        if isinstance(src_xml, basestring):
-            src_xml = minidom.parseString(src_xml)
-        elif isinstance(src_xml, file):
-            src_xml = minidom.parse(src_xml)
-        assert isinstance(src_xml, minidom.Node)
-
-        if not (hasattr(src_xml, 'tagName') and src_xml.tagName == 'services'):
-            src_xml = src_xml.getElementsByTagName('services')[0]
-
-        for i in range(src_xml.attributes.length):
-            try:
-                self[src_xml.attributes.item(i).name] = int(src_xml.attributes.item(i).value)
-            except ValueError:
-                self[src_xml.attributes.item(i).name] = src_xml.attributes.item(i).value
-
+        self.parse_xml(self._remote.get_status_service(
+            self._parent['name'],
+            self['name']
+        ))
         return self
