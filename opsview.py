@@ -4,6 +4,19 @@ from urllib import urlencode, quote_plus
 import urllib2
 import xml.dom.minidom as minidom
 
+
+def _dict_to_xml_string(target):
+    xml_string_list = [
+        '<%s>%s</%s>' % (
+            key,
+            (isinstance(target[key], dict) and
+                _dict_to_xml_string(target[key])) or
+                target[key],
+            key
+        ) for key in target
+    ]
+    return ''.join(xml_string_list)
+
 class OpsviewException(Exception):
     """Basic exception."""
 
@@ -37,34 +50,37 @@ class OpsviewRemote(object):
         'unhandled':    ('filter', 'unhandled'),
     })
 
-    def __init__(self, domain, username, password, path=None):
-        self.domain   = domain
+    def __init__(self, base_url, username, password):
+        self.base_url   = base_url
         self.username = username
         self.password = password
-        if path is not None:
-            self.path = path
-        else:
-            self.path = ''
-
         self._cookies = urllib2.HTTPCookieProcessor()
         self._opener = urllib2.build_opener(self._cookies)
         self._content_type = 'text/xml'
 
     def __str__(self):
-        return 'https://%s@%s/%s' % (self.username, self.domain, self.path)
+        return self.base_url
 
     def __repr__(self):
         return 'ServerRemote %s' % self
 
-    def _login(self):
+    def login(self):
+        """Login to the Opsview server.
+
+        This is implicitly called on every get/post to the Opsview server to
+        make sure we're always authed. Of course, we don't always send an actual
+        login request, the method will check if we have an "auth_tkt" cookie
+        first and return if we do since it means we're still logged in.
+
+        """
+        
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
             try:
                 self._opener.open(
-                    urllib2.Request('https://%s/%s%s' %
-                        (self.domain, self.path, OpsviewRemote.api_urls['login']),
+                    urllib2.Request(''.join([self.base_url, OpsviewRemote.api_urls['login']]),
                     urlencode(dict({
                         'login':'Log In',
-                        'back':'https://%s/%s' % (self.domain, self.path),
+                        'back':self.base_url,
                         'login_username':self.username,
                         'login_password':self.password,
                     })))
@@ -72,8 +88,8 @@ class OpsviewRemote(object):
             except urllib2.HTTPError:
                 # Catch the redirect and do nothing.
                 pass
-        assert 'auth_tkt' in [cookie.name for cookie in self._cookies.cookiejar], \
-            OpsviewException('Login failed')
+        if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
+            raise OpsviewException('Login failed')
 
     def _acknowledge(self, targets, comment=None, notify=True, auto_remove_comment=True):
         """Send acknowledgements for each target in targets.
@@ -88,7 +104,7 @@ class OpsviewRemote(object):
         """
 
         data = urlencode(dict({
-            'from':     'https://%s/%s' % (self.domain, self.path),
+            'from':     self.base_url,
             'submit':   'Submit',
             'comment':  comment,
             'notify':   (notify and 'on') or 'off',
@@ -110,15 +126,17 @@ class OpsviewRemote(object):
             payload.toxml(), dict({'Content-Type':'text/xml'})))
 
     def _send_get(self, location, parameters=None, headers=None):
-        request = urllib2.Request('https://%s/%s%s?%s' %
-            (self.domain, self.path, location, parameters))
+        request = urllib2.Request(
+            '?'.join([''.join([self.base_url, location]),
+            parameters])
+        )
         if headers is not None:
             map(
                 lambda header_key: request.add_header(header_key, headers[header_key]),
                 headers
             )
         request.add_header('Content-Type', self._content_type)
-        self._login()
+        self.login()
         try:
             reply = self._opener.open(request)
         except urllib2.HTTPError, reply:
@@ -127,13 +145,13 @@ class OpsviewRemote(object):
             return reply
 
     def _send_post(self, location, data, headers=None):
-        request = urllib2.Request('https://%s/%s%s' % (self.domain, self.path, location), data)
+        request = urllib2.Request(''.join([self.base_url, location]), data)
         if headers is not None:
             map(
                 lambda header_key: request.add_header(header_key, headers[header_key]),
                 headers
             )
-        self._login()
+        self.login()
         try:
             reply = self._opener.open(request)
         except urllib2.HTTPError, reply:
@@ -253,7 +271,7 @@ class OpsviewRemote(object):
         </opsview>"""
 
         return self._send_xml(minidom.parseString(xml %
-            (''.join(['<%s>%s</%s>' % (key, attrs[key], key) for key in attrs]))))
+            (_dict_to_xml_string(attrs))))
 
     def clone_host(self, old_host_name, **attrs):
         """Create a new host by cloning an old one.
@@ -272,8 +290,7 @@ class OpsviewRemote(object):
         </opsview>"""
 
         return self._send_xml(minidom.parseString(xml %
-            (old_host_name, ''.join(['<%s>%s</%s>' %
-                (key, attrs[key], key) for key in attrs]))))
+            (old_host_name, _dict_to_xml_string(attrs))))
 
     def delete_host(self, host):
         """Delete a host by name or ID number."""
@@ -289,7 +306,7 @@ class OpsviewRemote(object):
 
         return self._send_xml(minidom.parseString(xml % (method, host)))
 
-    def schedule_downtime(self, hostgroup, start_time, end_time, comment):
+    def schedule_downtime(self, hostgroup, start, end, comment):
         xml = """<opsview>
             <hostgroup action="change" by_%s="%s">
                 <downtime
