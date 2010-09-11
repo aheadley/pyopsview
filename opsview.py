@@ -3,6 +3,7 @@
 from urllib import urlencode, quote_plus
 import urllib2
 import xml.dom.minidom as minidom
+import json
 
 
 def _dict_to_xml(target):
@@ -119,7 +120,7 @@ class OpsviewRemote(object):
         return self.sendPost(OpsviewRemote.api_urls['acknowledge'], data)
 
     def _send_xml(self, payload):
-        """Send payload (an xml Node object) to the api url via POST."""
+        """Send payload (a xml Node object) to the api url via POST."""
 
         return minidom.parse(self._send_post(OpsviewRemote.api_urls['api'],
             payload.toxml(), dict({'Content-Type':'text/xml'})))
@@ -269,10 +270,10 @@ class OpsviewRemote(object):
         return self._send_xml(minidom.parseString(xml %
             (_dict_to_xml(attrs))))
 
-    def clone_host(self, old_host_name, **attrs):
+    def clone_host(self, src_host_name, **attrs):
         """Create a new host by cloning an old one.
 
-        Syntax is the same as create_host with the addition of the old_host_name
+        Syntax is the same as create_host with the addition of the src_host_name
         argument that selects the host to clone from.
 
         """
@@ -286,7 +287,7 @@ class OpsviewRemote(object):
         </opsview>"""
 
         return self._send_xml(minidom.parseString(xml %
-            (old_host_name, _dict_to_xml(attrs))))
+            (src_host_name, _dict_to_xml(attrs))))
 
     def delete_host(self, host):
         """Delete a host by name or ID number."""
@@ -376,6 +377,16 @@ class OpsviewRemote(object):
         return self._send_xml(minidom.parseString(xml))
 
 class OpsviewNode(dict):
+    """Basic Opsview node.
+
+    All nodes require access to an OpsviewRemote, a node can get it's remote by
+    at init either by passing an actual remote instance or just the login args
+    to create one (base_url, username, and password). If either of those don't
+    work out, the node will search upwards through the tree to find a node that
+    does have a remote and will use the first one it finds. If it fails to find
+    one after all that it will throw an OpsviewException.
+
+    """
     def __init__(self, parent=None, remote=None, src=None, **remote_login):
         self.parent = parent
         self.children = None
@@ -391,10 +402,16 @@ class OpsviewNode(dict):
                 self.remote = remote_search.remote
                 remote_search = remote_search.parent
         if self.remote is None:
-            raise OpsviewError('%s couldn\'t find a remote to use.' %
+            raise OpsviewException('%s couldn\'t find a remote to use' %
                 self)
         if src is not None:
-            self.parse_xml(src)
+            try:
+                self.parse_xml(src)
+            except AssertionError:
+                try:
+                    self.parse_json(src)
+                except AssertionError:
+                    raise OpsviewException('No handler for src format')
 
     def __str__(self):
         try:
@@ -426,12 +443,37 @@ class OpsviewNode(dict):
                 src.getElementsByTagName(self.__class__.child_type.status_xml_element_name)
             )
 
+    def parse_json(self, src):
+        if isinstance(src, basestring):
+            src = json.loads(src)
+        elif isinstance(src, file):
+            src = json.load(src)
+        assert isinstance(src, dict)
+
+        if self.__class__.status_json_element_name in src:
+            src = src[self.__class__.status_json_element_name]
+        for item in filter(lambda item: isinstance(src[item], basestring), src):
+            try:
+                self[item] = int(src[item])
+            except ValueError:
+                self[item] = src[item]
+        if self.__class__.child_type is not None:
+            self.children = map(
+                lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
+                src[self.__class__.child_type.status_xml_element_name]
+            )
+
     def to_xml(self):
         return _dict_to_xml(dict({self.__class__.status_xml_element_name:self}))
 
+    def to_json(self):
+        return json.dumps(self)
+
 class OpsviewService(OpsviewNode):
+    """Logical Opsview service node."""
 
     status_xml_element_name = 'services'
+    status_json_element_name = 'services'
     child_type = None
 
     def update(self):
@@ -442,8 +484,10 @@ class OpsviewService(OpsviewNode):
         return self
 
 class OpsviewHost(OpsviewNode):
+    """Logical Opsview host node."""
 
     status_xml_element_name = 'list'
+    status_json_element_name = 'list'
     child_type = OpsviewService
 
     def update(self, filters=None):
@@ -451,8 +495,10 @@ class OpsviewHost(OpsviewNode):
         return self
 
 class OpsviewServer(OpsviewNode):
+    """Logical Opsview server node."""
 
     status_xml_element_name = 'data'
+    status_json_element_name = 'service'
     child_type = OpsviewHost
 
     def update(self, filters=None):
