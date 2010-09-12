@@ -3,8 +3,23 @@
 from urllib import urlencode, quote_plus
 import urllib2
 import xml.dom.minidom as minidom
-import json
-
+try:
+	import json
+except ImportError:
+	json = None
+	
+if not hasattr(__builtins__, 'all'):
+    def all(target):
+        for item in target:
+            if not item:
+                return False
+        return True
+if not hasattr(__builtins__, 'any'):
+    def any(target):
+        for item in target:
+            if item:
+                return True
+        return False
 
 def _dict_to_xml(target):
     element_list = [
@@ -59,10 +74,7 @@ class OpsviewRemote(object):
         self._content_type = 'text/xml'
 
     def __str__(self):
-        return self.base_url
-
-    def __repr__(self):
-        return 'ServerRemote %s' % self
+        return '%s(%s)' % (self.__class__.__name__, self.base_url)
 
     def login(self):
         """Login to the Opsview server.
@@ -460,32 +472,33 @@ class OpsviewNode(dict):
                 lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
                 src.getElementsByTagName(self.__class__.child_type.status_xml_element_name)
             )
+    if json is not None:
+        def parse_json(self, src):
+            if isinstance(src, basestring):
+                src = json.loads(src)
+            elif isinstance(src, file):
+                src = json.load(src)
+            assert isinstance(src, dict)
 
-    def parse_json(self, src):
-        if isinstance(src, basestring):
-            src = json.loads(src)
-        elif isinstance(src, file):
-            src = json.load(src)
-        assert isinstance(src, dict)
-
-        if self.__class__.status_json_element_name in src:
-            src = src[self.__class__.status_json_element_name]
-        for item in filter(lambda item: isinstance(src[item], basestring), src):
-            try:
-                self[item] = int(src[item])
-            except ValueError:
-                self[item] = src[item]
-        if self.__class__.child_type is not None:
-            self.children = map(
-                lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
-                src[self.__class__.child_type.status_xml_element_name]
-            )
+            if self.__class__.status_json_element_name in src:
+                src = src[self.__class__.status_json_element_name]
+            for item in filter(lambda item: isinstance(src[item], basestring), src):
+                try:
+                    self[item] = int(src[item])
+                except ValueError:
+                    self[item] = src[item]
+            if self.__class__.child_type is not None:
+                self.children = map(
+                    lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
+                    src[self.__class__.child_type.status_xml_element_name]
+                )
 
     def to_xml(self):
         return _dict_to_xml(dict({self.__class__.status_xml_element_name:self}))
-
-    def to_json(self):
-        return json.dumps(self)
+    
+    if json is not None:
+        def to_json(self):
+            return json.dumps(self)
 
 class OpsviewService(OpsviewNode):
     """Logical Opsview service node."""
