@@ -9,6 +9,6 @@ setup(
     author='Alex Headley',
     author_email='aheadley@waysaboutstuff.com',
     url='http://github.com/aheadley/pyopsviewremote',
-    download_url='http://github.com/aheadley/pyopsviewremote/tarball/master',
+    download_url='http://github.com/aheadley/pyopsview/tarball/master',
     py_modules=['opsview'],
 )

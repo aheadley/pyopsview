@@ -4,17 +4,20 @@ from urllib import urlencode, quote_plus
 import urllib2
 import xml.dom.minidom as minidom
 try:
-	import json
+    # The json module was added in Python 2.6
+    import json
 except ImportError:
-	json = None
+    json = None
 	
 if not hasattr(__builtins__, 'all'):
+    # all was added in Python 2.5
     def all(target):
         for item in target:
             if not item:
                 return False
         return True
 if not hasattr(__builtins__, 'any'):
+    # any was added in Python 2.5
     def any(target):
         for item in target:
             if item:
@@ -472,6 +475,7 @@ class OpsviewNode(dict):
                 lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
                 src.getElementsByTagName(self.__class__.child_type.status_xml_element_name)
             )
+
     if json is not None:
         def parse_json(self, src):
             if isinstance(src, basestring):
