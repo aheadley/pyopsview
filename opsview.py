@@ -257,10 +257,14 @@ class OpsviewRemote(object):
         """Create a new host.
 
         The new host's attributes are passed as as arbitrary keyword arguments.
-        There are no restrictions or checking done on the keywords or their
-        values so it would be wise to check the return from the opsview server.
+        The only values checked for are 'name' and 'ip' as they are required by
+        Opsview.
 
         """
+
+        required_attrs = ['name', 'ip']
+        if not all(map(lambda attr: attr in attrs, required_attrs)):
+            raise OpsviewException('Missing host attributes')
         xml = """<opsview>
             <host action="create">
                 %s
@@ -277,6 +281,10 @@ class OpsviewRemote(object):
         argument that selects the host to clone from.
 
         """
+
+        required_attrs = ['name', 'ip']
+        if not all(map(lambda attr: attr in attrs, required_attrs)):
+            raise OpsviewException('Missing host attributes')
         xml = """<opsview>
             <host action="create">
                 <clone>
@@ -304,6 +312,8 @@ class OpsviewRemote(object):
         return self._send_xml(minidom.parseString(xml % (method, host)))
 
     def schedule_downtime(self, hostgroup, start, end, comment):
+        """Schedule downtime for a leaf hostgroup by id or name."""
+
         xml = """<opsview>
             <hostgroup action="change" by_%s="%s">
                 <downtime
@@ -324,6 +334,8 @@ class OpsviewRemote(object):
             (method, hostgroup, start_time, end_time, comment)))
 
     def disable_scheduled_downtime(self, hostgroup):
+        """Cancel downtime for a leaf hostgroup by id or name."""
+
         xml = """<opsview>
             <hostgroup action="change" by_%s="%s">
                 <downtime>disable</downtime>
@@ -338,6 +350,8 @@ class OpsviewRemote(object):
         return self._send_xml(minidom.parseString(xml % (method, hostgroup)))
 
     def enable_notifications(self, hostgroup):
+    	"""Enable notifications for a leaf hostgroup by id or name."""
+
         xml = """<opsview>
             <hostgroup action="change" by_%s="%s">
                 <notifications>enable</notifications>
@@ -387,6 +401,7 @@ class OpsviewNode(dict):
     one after all that it will throw an OpsviewException.
 
     """
+
     def __init__(self, parent=None, remote=None, src=None, **remote_login):
         self.parent = parent
         self.children = None
@@ -405,13 +420,7 @@ class OpsviewNode(dict):
             raise OpsviewException('%s couldn\'t find a remote to use' %
                 self)
         if src is not None:
-            try:
-                self.parse_xml(src)
-            except AssertionError:
-                try:
-                    self.parse_json(src)
-                except AssertionError:
-                    raise OpsviewException('No handler for src format')
+            self.parse(src)
 
     def __str__(self):
         try:
@@ -421,6 +430,15 @@ class OpsviewNode(dict):
 
     def update(self, filters=None):
         raise NotImplementedError()
+
+    def parse(self, src):
+        try:
+            self.parse_xml(src)
+        except AssertionError:
+            try:
+                self.parse_json(src)
+            except AssertionError:
+                raise OpsviewException('No handler for src format')
 
     def parse_xml(self, src):
         if isinstance(src, basestring):
