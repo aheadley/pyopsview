@@ -255,7 +255,7 @@ class OpsviewRemote(object):
 
         """
 
-        status = self._get_status_all(['warning', 'critical', 'unhandled'])
+        status = self.get_status_all(['warning', 'critical', 'unhandled'])
         alerting = dict({})
         for host in status.getElementsByTagName('list'):
             alerting[host.getAttribute('name')] = []
