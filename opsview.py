@@ -3,10 +3,11 @@
 from urllib import urlencode, quote_plus
 import urllib2
 import xml.dom.minidom as minidom
+from xml.parsers.expat import ExpatError
 try:
-    # The json module was added in Python 2.6
     import json
 except ImportError:
+    # The json module was added in Python 2.6
     json = None
 	
 if not hasattr(__builtins__, 'all'):
@@ -43,9 +44,12 @@ class OpsviewException(Exception):
             self.msg = 'Unknown Error'
         else:
             self.msg = msg
-
     def __str__(self):
         return self.msg
+class OpsviewParseException(OpsviewException):
+    pass
+class OpsviewLogicException(OpsviewException):
+    pass
 
 class OpsviewRemote(object):
     """Remote interface to Opsview server."""
@@ -132,7 +136,7 @@ class OpsviewRemote(object):
             'host_selection=%s' % quote_plus(host)
             for host in targets for service in targets[host]])
 
-        return self.sendPost(OpsviewRemote.api_urls['acknowledge'], data)
+        return self._send_post(OpsviewRemote.api_urls['acknowledge'], data)
 
     def _send_xml(self, payload):
         """Send payload (a xml Node object) to the api url via POST."""
@@ -262,7 +266,7 @@ class OpsviewRemote(object):
             if int(host.getAttribute('current_check_attempt')) == \
                 int(host.getAttribute('max_check_attempts')):
                 alerting[host.getAttribute('name')].append(None)
-            for service in host.getElementsByName('services'):
+            for service in host.getElementsByTagName('services'):
                 if int(service.getAttribute('current_check_attempt')) == \
                     int(service.getAttribute('max_check_attempts')):
                     alerting[host.getAttribute('name')].append(service.getAttribute('name'))
@@ -424,7 +428,7 @@ class OpsviewNode(dict):
 
         if isinstance(remote, OpsviewRemote):
             self.remote = remote
-        elif all(map(lambda x: x in remote_login, ['base_url', 'username', 'password'])):
+        elif all(map(lambda attr: attr in remote_login, ['base_url', 'username', 'password'])):
             self.remote = OpsviewRemote(**remote_login)
         else:
             remote_search = self.parent
@@ -432,16 +436,28 @@ class OpsviewNode(dict):
                 self.remote = remote_search.remote
                 remote_search = remote_search.parent
         if self.remote is None:
-            raise OpsviewException('%s couldn\'t find a remote to use' %
+            raise OpsviewLogicException('%s couldn\'t find a remote to use' %
                 self)
         if src is not None:
             self.parse(src)
 
     def __str__(self):
         try:
-            return '%s(%s)' % (self.__class__.__name__, self['name'])
+            return self['name']
         except KeyError:
-            return '%s()' % (self.__class__.__name__)
+            return self.__class__.__name__
+
+    def append_child(self, child_src):
+        try:
+            self.children.append(
+                self.__class__.child_type(
+                    parent=self,
+                    src=child_src,
+                    remote=self.remote))
+        except TypeError:
+            # self.__class__.child_type is None
+            raise OpsviewLogicException('%s cannot have children' %
+                self.__class__.__name__)
 
     def update(self, filters=None):
         raise NotImplementedError()
@@ -449,18 +465,22 @@ class OpsviewNode(dict):
     def parse(self, src):
         try:
             self.parse_xml(src)
-        except AssertionError:
+        except OpsviewParseException:
             try:
                 self.parse_json(src)
-            except AssertionError:
-                raise OpsviewException('No handler for src format')
+            except OpsviewParseException:
+                raise OpsviewParseException('No handler for source format')
 
     def parse_xml(self, src):
-        if isinstance(src, basestring):
-            src = minidom.parseString(src)
-        elif isinstance(src, file):
-            src = minidom.parse(src)
-        assert isinstance(src, minidom.Node)
+        try:
+            if isinstance(src, basestring):
+                src = minidom.parseString(src)
+            elif isinstance(src, file):
+                src = minidom.parse(src)
+            assert isinstance(src, minidom.Node)
+        except (ExpatError, AssertionError):
+            raise OpsviewParseException('Failed to parse XML source')
+        
 
         if not (hasattr(src, 'tagName') and
             src.tagName == self.__class__.status_xml_element_name):
@@ -470,19 +490,29 @@ class OpsviewNode(dict):
                 self[src.attributes.item(i).name] = int(src.attributes.item(i).value)
             except ValueError:
                 self[src.attributes.item(i).name] = src.attributes.item(i).value
-        if self.__class__.child_type is not None:
-            self.children = map(
-                lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
-                src.getElementsByTagName(self.__class__.child_type.status_xml_element_name)
+        try:
+            # This may cause a memory leak if Python doesn't properly garbage
+            #  collect the released objects.
+            self.children = []
+            map(
+                self.append_child,
+                src.getElementsByTagName(
+                    self.__class__.child_type.status_xml_element_name)
             )
+        except OpsviewLogicException:
+            raise OpsviewParseException('Invalid source structure')
+
 
     if json is not None:
         def parse_json(self, src):
-            if isinstance(src, basestring):
-                src = json.loads(src)
-            elif isinstance(src, file):
-                src = json.load(src)
-            assert isinstance(src, dict)
+            try:
+                if isinstance(src, basestring):
+                    src = json.loads(src)
+                elif isinstance(src, file):
+                    src = json.load(src)
+                assert isinstance(src, dict)
+            except (ValueError, AssertionError):
+                raise OpsviewParseException('Failed to parse JSON source')
 
             if self.__class__.status_json_element_name in src:
                 src = src[self.__class__.status_json_element_name]
@@ -491,11 +521,14 @@ class OpsviewNode(dict):
                     self[item] = int(src[item])
                 except ValueError:
                     self[item] = src[item]
-            if self.__class__.child_type is not None:
-                self.children = map(
-                    lambda node: self.__class__.child_type(parent=self, src=node, remote=self.remote),
-                    src[self.__class__.child_type.status_xml_element_name]
+            try:
+                self.children = []
+                map(
+                    self.append_child,
+                    src[self.__class__.child_type.status_json_element_name]
                 )
+            except OpsviewLogicException:
+                raise OpsviewParseException('Invalid source structure')
 
     def to_xml(self):
         return _dict_to_xml(dict({self.__class__.status_xml_element_name:self}))
