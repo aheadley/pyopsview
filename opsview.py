@@ -40,18 +40,40 @@ class OpsviewException(Exception):
     """Basic exception."""
 
     def __init__(self, msg=None):
-        if msg is not None:
+        if msg is None:
             self.msg = 'Unknown Error'
         else:
             self.msg = msg
     def __str__(self):
-        return self.msg
+        return 'Error: %s' % self.msg
+    def __repr__(self):
+        return str(self)
 class OpsviewParseException(OpsviewException):
-    pass
+    parse_text_length_limit = 45
+    def __init__(self, msg, text):
+        super(OpsviewParseException, self).__init__(msg)
+        self.parse_text = text
+    def __str__(self):
+        if len(self.parse_text) > self.__class__.msg_length_limit:
+            text = self.parse_text[:45] + '...'
+        else:
+            text = self.parse_text
+        return 'Error parsing "%s": %s' % (text, self.msg)
 class OpsviewLogicException(OpsviewException):
-    pass
+    def __str__(self):
+        return 'Logic Error: %s' % self.msg
 class OpsviewHTTPException(OpsviewException):
-    pass
+    def __str__(self):
+        return 'HTTP Error: %s' % self.msg
+class OpsviewAttributeException(OpsviewException):
+    def __str__(self):
+        return 'Invalid or unknown attribute: %s' % self.msg
+class OpsviewValueException(OpsviewException):
+    def __init__(self, value_name, value):
+        self.value_name = value_name
+        self.value = value
+    def __str__(self):
+        return 'Invalid value: "%s" as %s' % (self.value, self.value_name)
 
 class OpsviewRemote(object):
     """Remote interface to Opsview server."""
@@ -111,25 +133,33 @@ class OpsviewRemote(object):
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
             raise OpsviewHTTPException('Login failed')
 
-    def _acknowledge(self, targets, comment=None, notify=True, auto_remove_comment=True):
+    def _acknowledge(self, targets, comment='', notify=True, auto_remove_comment=True):
         """Send acknowledgements for each target in targets.
         
         Targets should be a dict with this layout:
         targets=dict({
             host1:[list, of, services],
-            host2:[list, again],
-            host3:[None], #None means acknowledge the host itself
+            host2:[another, list, None], #None means acknowledge the host itself
         })
 
         """
+        
+        if notify:
+            notify = 'on'
+        else:
+            notify = 'off'
+        if auto_remove_comment:
+            auto_remove_comment = 'on'
+        else:
+            auto_remove_comment = 'off'
 
         data = urlencode(dict({
             'from':     self.base_url,
             'submit':   'Submit',
             'comment':  comment,
-            'notify':   (notify and 'on') or 'off',
+            'notify':   notify,
             'autoremovecomment':
-                        (auto_remove_comment and 'on') or 'off',
+                        auto_remove_comment,
         }))
         # Construct the hosts and services to acknowledge parameters.
         data += '&' + '&'.join([(service and 'service_selection=%s' %
@@ -141,6 +171,15 @@ class OpsviewRemote(object):
 
     def _send_xml(self, payload):
         """Send payload (a xml Node object) to the api url via POST."""
+
+        try:
+            if isinstance(payload, basestring):
+                payload = minidom.parseString(payload)
+            elif isinstance(payload, file):
+                payload = minidom.parse(payload)
+            assert isinstance(payload, minidom.Node)
+        except (AssertionError, ExpatError):
+            raise OpsviewHTTPException('Invalid XML payload')
         response = send_post(OpsviewRemote.api_urls['api'],
                 payload.toxml(), dict({'Content-Type':'text/xml'}))
         try:
@@ -186,11 +225,17 @@ class OpsviewRemote(object):
 
         """
 
-        if filters is None:
-            filters = []
-        else:
+        try:
             filters = [OpsviewRemote.filters[filter] for filter in filters]
-        return minidom.parse(self._send_get(OpsviewRemote.api_urls['status_all'], urlencode(filters)))
+        except TypeError:
+            filters = []
+        try:
+            return minidom.parse(self._send_get(
+                OpsviewRemote.api_urls['status_all'],
+                urlencode(filters)
+            ))
+        except ExpatError:
+            raise OpsviewHTTPException('Recieved invalid status XML')
 
     def get_status_host(self, host, filters=None):
         """Get status of a host and all its services.
@@ -200,22 +245,29 @@ class OpsviewRemote(object):
         
         """
 
-        if filters is None:
-            filters = []
-        else:
+        try:
             filters = [OpsviewRemote.filters[filter] for filter in filters]
+        except TypeError:
+            filters = []
         filters.append(('host', host))
-        return minidom.parse(self._send_get(OpsviewRemote.api_urls['status_host'], urlencode(filters)))
+        try:
+            return minidom.parse(self._send_get(
+                OpsviewRemote.api_urls['status_host'],
+                urlencode(filters)
+            ))
+        except ExpatError:
+            raise OpsviewHTTPException('Recieved invalid status XML')
 
     def get_status_service(self, host, service):
         """Get status of a host's service."""
 
         host_xml = self.get_status_host(host)
         services = host_xml.getElementsByTagName('services')
-        for svc_iter in services:
-            if svc_iter.getAttribute('name').lower() == service.lower():
-                return svc_iter
-        raise OpsviewException('Service not found: %s.%s' % (host, service))
+        for node in services:
+            if node.getAttribute('name').lower() == service.lower():
+                return node
+        # This behavior is inconsistent with get_status_host and should be fixed.
+        raise OpsviewAttributeException('service')
 
     def get_status_by_hostgroup(self, hostgroup, filters=None):
         """Get status of the hosts in a hostgroup..
@@ -225,13 +277,13 @@ class OpsviewRemote(object):
 
         """
 
-        if filters is None:
-            filters = []
-        else:
+        try:
             filters = [OpsviewRemote.filters[filter] for filter in filters]
+        except TypeError:
+            filters = []
         filters.append(('hostgroupid', int(hostgroup)))
         return minidom.parse(self._send_get(
-            OpsviewRemote.api_urls['status_hostgroup'],
+            OpsviewRemote.api_urls['status_host'],
             urlencode(filters)
         ))
 
@@ -241,8 +293,11 @@ class OpsviewRemote(object):
         if hostgroup is None:
             hostgroup = ''
 
-        return minidom.parse(self._send_get('%s/%s' %
-            (OpsviewRemote.api_urls['status_hostgroup'], hostgroup)))
+        try:
+            return minidom.parse(self._send_get('%s/%s' %
+                (OpsviewRemote.api_urls['status_hostgroup'], hostgroup)))
+        except ExpatError:
+            raise OpsviewHTTPException('Recieved invalid status XML')
 
     def acknowledge_service(self, host, service, comment, notify=True, auto_remove_comment=True):
         """Acknoledge a single service."""
@@ -264,6 +319,7 @@ class OpsviewRemote(object):
 
         status = self.get_status_all(['warning', 'critical', 'unhandled'])
         alerting = dict({})
+        # These two loops can probably stand to be cleaned up a bit.
         for host in status.getElementsByTagName('list'):
             alerting[host.getAttribute('name')] = []
             if int(host.getAttribute('current_check_attempt')) == \
@@ -286,15 +342,15 @@ class OpsviewRemote(object):
 
         required_attrs = ['name', 'ip']
         if not all(map(lambda attr: attr in attrs, required_attrs)):
-            raise OpsviewException('Missing host attributes')
+            raise OpsviewAttributeException(
+                ', '.join(filter(lambda attr: attr not in attrs, required_attrs)))
         xml = """<opsview>
             <host action="create">
                 %s
             </host>
         </opsview>"""
 
-        return self._send_xml(minidom.parseString(xml %
-            (_dict_to_xml(attrs))))
+        return self._send_xml(xml % _dict_to_xml(attrs))
 
     def clone_host(self, src_host_name, **attrs):
         """Create a new host by cloning an old one.
@@ -306,7 +362,8 @@ class OpsviewRemote(object):
 
         required_attrs = ['name', 'ip']
         if not all(map(lambda attr: attr in attrs, required_attrs)):
-            raise OpsviewException('Missing host attributes')
+            raise OpsviewAttributeException(
+                ', '.join(filter(lambda attr: attr not in attrs, required_attrs)))
         xml = """<opsview>
             <host action="create">
                 <clone>
@@ -316,8 +373,7 @@ class OpsviewRemote(object):
             </host>
         </opsview>"""
 
-        return self._send_xml(minidom.parseString(xml %
-            (src_host_name, _dict_to_xml(attrs))))
+        return self._send_xml(xml % (src_host_name, _dict_to_xml(attrs)))
 
     def delete_host(self, host):
         """Delete a host by name or ID number."""
@@ -331,7 +387,7 @@ class OpsviewRemote(object):
         else:
             method = 'name'
 
-        return self._send_xml(minidom.parseString(xml % (method, host)))
+        return self._send_xml(xml % (method, host))
 
     def schedule_downtime(self, hostgroup, start, end, comment):
         """Schedule downtime for a leaf hostgroup by id or name."""
@@ -352,8 +408,8 @@ class OpsviewRemote(object):
         else:
             method = 'name'
 
-        return self._send_xml(minidom.parseString(xml %
-            (method, hostgroup, start_time, end_time, comment)))
+        return self._send_xml(xml %
+            (method, hostgroup, start, end, comment))
 
     def disable_scheduled_downtime(self, hostgroup):
         """Cancel downtime for a leaf hostgroup by id or name."""
@@ -369,7 +425,7 @@ class OpsviewRemote(object):
         else:
             method = 'name'
 
-        return self._send_xml(minidom.parseString(xml % (method, hostgroup)))
+        return self._send_xml(xml % (method, hostgroup))
 
     def enable_notifications(self, hostgroup):
     	"""Enable notifications for a leaf hostgroup by id or name."""
@@ -385,7 +441,7 @@ class OpsviewRemote(object):
         else:
             method = 'name'
 
-        return self._send_xml(minidom.parseString(xml % (method, hostgroup)))
+        return self._send_xml(xml % (method, hostgroup))
 
     def disable_notifications(self, hostgroup):
     	"""Disable notifications for a leaf hostgroup by id or name."""
@@ -401,7 +457,7 @@ class OpsviewRemote(object):
         else:
             method = 'name'
 
-        return self._send_xml(minidom.parseString(xml % (method, hostgroup)))
+        return self._send_xml(xml % (method, hostgroup))
 
     def reload(self):
         """Reload the remote Opsview server's configuration."""
@@ -410,7 +466,7 @@ class OpsviewRemote(object):
             <system action="reload"/>
         </opsview>"""
 
-        return self._send_xml(minidom.parseString(xml))
+        return self._send_xml(xml)
 
 class OpsviewNode(dict):
     """Basic Opsview node.
@@ -439,7 +495,7 @@ class OpsviewNode(dict):
                 self.remote = remote_search.remote
                 remote_search = remote_search.parent
         if self.remote is None:
-            raise OpsviewLogicException('%s couldn\'t find a remote to use' %
+            raise OpsviewLogicException('Unable to find OpsviewRemote for %s' %
                 self)
         if src is not None:
             self.parse(src)
@@ -449,6 +505,12 @@ class OpsviewNode(dict):
             return self['name']
         except KeyError:
             return self.__class__.__name__
+
+    def __repr__(self):
+        try:
+            return '%s(%s)' % (self.__class__.__name__, self['name'])
+        except KeyError:
+            return '%s()' % self.__class__.__name__
 
     def append_child(self, child_src):
         try:
@@ -472,7 +534,7 @@ class OpsviewNode(dict):
             try:
                 self.parse_json(src)
             except OpsviewParseException:
-                raise OpsviewParseException('No handler for source format')
+                raise OpsviewParseException('No handler for source format', src)
 
     def parse_xml(self, src):
         try:
@@ -482,7 +544,7 @@ class OpsviewNode(dict):
                 src = minidom.parse(src)
             assert isinstance(src, minidom.Node)
         except (ExpatError, AssertionError):
-            raise OpsviewParseException('Failed to parse XML source')
+            raise OpsviewParseException('Failed to parse XML source', src)
         
 
         if not (hasattr(src, 'tagName') and
@@ -493,17 +555,19 @@ class OpsviewNode(dict):
                 self[src.attributes.item(i).name] = int(src.attributes.item(i).value)
             except ValueError:
                 self[src.attributes.item(i).name] = src.attributes.item(i).value
-        try:
+
+        self.children = []
             # This may cause a memory leak if Python doesn't properly garbage
             #  collect the released objects.
-            self.children = []
+        try:
             map(
                 self.append_child,
                 src.getElementsByTagName(
                     self.__class__.child_type.status_xml_element_name)
             )
-        except OpsviewLogicException:
-            raise OpsviewParseException('Invalid source structure')
+        except (OpsviewLogicException, AttributeError):
+            if self.__class__.child_type is not None:
+                raise OpsviewParseException('Invalid source structure', '')
 
 
     if json is not None:
@@ -515,7 +579,7 @@ class OpsviewNode(dict):
                     src = json.load(src)
                 assert isinstance(src, dict)
             except (ValueError, AssertionError):
-                raise OpsviewParseException('Failed to parse JSON source')
+                raise OpsviewParseException('Failed to parse JSON source', src)
 
             if self.__class__.status_json_element_name in src:
                 src = src[self.__class__.status_json_element_name]
@@ -524,14 +588,15 @@ class OpsviewNode(dict):
                     self[item] = int(src[item])
                 except ValueError:
                     self[item] = src[item]
+            self.children = []
             try:
-                self.children = []
                 map(
                     self.append_child,
                     src[self.__class__.child_type.status_json_element_name]
                 )
-            except OpsviewLogicException:
-                raise OpsviewParseException('Invalid source structure')
+            except (OpsviewLogicException, AttributeError):
+                if self.__class__.child_type is not None:
+                    raise OpsviewParseException('Invalid source structure', src)
 
     def to_xml(self):
         return _dict_to_xml(dict({self.__class__.status_xml_element_name:self}))
@@ -574,4 +639,20 @@ class OpsviewServer(OpsviewNode):
 
     def update(self, filters=None):
         self.parse_xml(self.remote.get_status_all(filters))
+        return self
+
+class OpsviewHostgroup(OpsviewServer):
+    """Logical Opsview Hostgroup node."""
+
+    def __init__(self, parent=None, remote=None, src=None, id=None, **remote_login):
+        try:
+            self.id = int(id)
+            assert self.id >= 0
+        except (ValueError, AssertionError):
+            raise OpsviewValueException('id', id)
+        super(OpsviewHostgroup, self).__init__(parent, remote, src, **remote_login)
+
+    def update(self, filters=None):
+        self.parse_xml(
+            self.remote.get_status_by_hostgroup(self.id, filters))
         return self
