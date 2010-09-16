@@ -340,7 +340,7 @@ class OpsviewRemote(object):
             </hostgroup>
         </opsview>"""
 
-        if host.isdigit():
+        if hostgroup.isdigit():
             method = 'id'
         else:
             method = 'name'
@@ -357,7 +357,7 @@ class OpsviewRemote(object):
             </hostgroup>
         </opsview>"""
 
-        if host.isdigit():
+        if hostgroup.isdigit():
             method = 'id'
         else:
             method = 'name'
@@ -373,7 +373,7 @@ class OpsviewRemote(object):
             </hostgroup>
         </opsview>"""
 
-        if host.isdigit():
+        if hostgroup.isdigit():
             method = 'id'
         else:
             method = 'name'
@@ -389,7 +389,7 @@ class OpsviewRemote(object):
             </hostgroup>
         </opsview>"""
 
-        if host.isdigit():
+        if hostgroup.isdigit():
             method = 'id'
         else:
             method = 'name'
