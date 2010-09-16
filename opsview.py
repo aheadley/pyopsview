@@ -50,6 +50,8 @@ class OpsviewParseException(OpsviewException):
     pass
 class OpsviewLogicException(OpsviewException):
     pass
+class OpsviewHTTPException(OpsviewException):
+    pass
 
 class OpsviewRemote(object):
     """Remote interface to Opsview server."""
@@ -104,11 +106,10 @@ class OpsviewRemote(object):
                         'login_password':self.password,
                     })))
                 )
-            except urllib2.HTTPError:
-                # Catch the redirect and do nothing.
-                pass
+            except urllib2.HTTPError, error:
+                raise OpsviewHTTPException(error)
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
-            raise OpsviewException('Login failed')
+            raise OpsviewHTTPException('Login failed')
 
     def _acknowledge(self, targets, comment=None, notify=True, auto_remove_comment=True):
         """Send acknowledgements for each target in targets.
@@ -140,9 +141,13 @@ class OpsviewRemote(object):
 
     def _send_xml(self, payload):
         """Send payload (a xml Node object) to the api url via POST."""
-
-        return minidom.parse(self._send_post(OpsviewRemote.api_urls['api'],
-            payload.toxml(), dict({'Content-Type':'text/xml'})))
+        response = send_post(OpsviewRemote.api_urls['api'],
+                payload.toxml(), dict({'Content-Type':'text/xml'}))
+        try:
+            response = minidom.parse(response)
+        except ExpatError:
+            raise OpsviewHTTPException('Recieved non-XML response from Opsview server')
+        return response
 
     def _send_get(self, location, parameters=None, headers=None):
         request = urllib2.Request('%s?%s' % (self.base_url + location, parameters))
@@ -155,10 +160,9 @@ class OpsviewRemote(object):
         self.login()
         try:
             reply = self._opener.open(request)
-        except urllib2.HTTPError, reply:
-            return reply
-        else:
-            return reply
+        except urllib2.HTTPError, error:
+            raise OpsviewHTTPException(error)
+        return reply
 
     def _send_post(self, location, data, headers=None):
         request = urllib2.Request(self.base_url + location, data)
@@ -170,10 +174,9 @@ class OpsviewRemote(object):
         self.login()
         try:
             reply = self._opener.open(request)
-        except urllib2.HTTPError, reply:
-            return reply
-        else:
-            return reply
+        except urllib2.HTTPError, error:
+            raise OpsviewHTTPException(error)
+        return reply
 
     def get_status_all(self, filters=None):
         """Get status of all services.
