@@ -36,6 +36,12 @@ def _dict_to_xml(target):
     ]
     return ''.join(element_list)
 
+STATE_OK        = 'ok'
+STATE_WARNING   = 'warning'
+STATE_CRITICAL  = 'critical'
+STATE_UNKNOWN   = 'unknown'
+STATE_UNHANDLED = 'unhandled'
+
 class OpsviewException(Exception):
     """Basic exception."""
 
@@ -89,20 +95,28 @@ class OpsviewRemote(object):
         'api':                  'api',
     })
     filters = dict({
-        'ok':           ('state', 0),
-        'warning':      ('state', 1),
-        'critical':     ('state', 2),
-        'unknown':      ('state', 3),
-        'unhandled':    ('filter', 'unhandled'),
+        STATE_OK:           ('state', 0),
+        STATE_WARNING:      ('state', 1),
+        STATE_CRITICAL:     ('state', 2),
+        STATE_UNKNOWN:      ('state', 3),
+        STATE_UNHANDLED:    ('filter', 'unhandled'),
+    })
+    status_content_types = dict({
+        # json is disabled since it would currently break a bunch of shit.
+        #'json': 'application/json',
+        'xml':  'text/xml',
     })
 
-    def __init__(self, base_url, username, password):
+    def __init__(self, base_url, username, password, content_type=None):
         self.base_url = base_url
         self.username = username
         self.password = password
         self._cookies = urllib2.HTTPCookieProcessor()
         self._opener = urllib2.build_opener(self._cookies)
-        self._content_type = 'text/xml'
+        try:
+            self._content_type = self.__class__.status_content_types[content_type]
+        except KeyError:
+            self._content_type = self.__class__.status_content_types['xml']
 
     def __str__(self):
         return '%s(%s)' % (self.__class__.__name__, self.base_url)
@@ -120,7 +134,7 @@ class OpsviewRemote(object):
         if 'auth_tkt' not in [cookie.name for cookie in self._cookies.cookiejar]:
             try:
                 self._opener.open(
-                    urllib2.Request(self.base_url + OpsviewRemote.api_urls['login'],
+                    urllib2.Request(self.base_url + self.__class__.api_urls['login'],
                     urlencode(dict({
                         'login':'Log In',
                         'back':self.base_url,
@@ -167,7 +181,7 @@ class OpsviewRemote(object):
             'host_selection=%s' % quote_plus(host)
             for host in targets for service in targets[host]])
 
-        return self._send_post(OpsviewRemote.api_urls['acknowledge'], data)
+        return self._send_post(self.__class__.api_urls['acknowledge'], data)
 
     def _send_xml(self, payload):
         """Send payload (a xml Node object) to the api url via POST."""
@@ -180,8 +194,10 @@ class OpsviewRemote(object):
             assert isinstance(payload, minidom.Node)
         except (AssertionError, ExpatError):
             raise OpsviewHTTPException('Invalid XML payload')
-        response = send_post(OpsviewRemote.api_urls['api'],
-                payload.toxml(), dict({'Content-Type':'text/xml'}))
+        response = send_post(self.__class__.api_urls['api'],
+                payload.toxml(),
+                dict({'Content-Type':self.__class__.status_content_types['xml']})
+        )
         try:
             response = minidom.parse(response)
         except ExpatError:
@@ -226,12 +242,12 @@ class OpsviewRemote(object):
         """
 
         try:
-            filters = [OpsviewRemote.filters[filter] for filter in filters]
+            filters = [self.__class__.filters[filter] for filter in filters]
         except TypeError:
             filters = []
         try:
             return minidom.parse(self._send_get(
-                OpsviewRemote.api_urls['status_all'],
+                self.__class__.api_urls['status_all'],
                 urlencode(filters)
             ))
         except ExpatError:
@@ -246,13 +262,13 @@ class OpsviewRemote(object):
         """
 
         try:
-            filters = [OpsviewRemote.filters[filter] for filter in filters]
+            filters = [self.__class__.filters[filter] for filter in filters]
         except TypeError:
             filters = []
         filters.append(('host', host))
         try:
             return minidom.parse(self._send_get(
-                OpsviewRemote.api_urls['status_host'],
+                self.__class__.api_urls['status_host'],
                 urlencode(filters)
             ))
         except ExpatError:
@@ -261,7 +277,11 @@ class OpsviewRemote(object):
     def get_status_service(self, host, service):
         """Get status of a host's service."""
 
+        # Temporary hack until forced content type is removed from _send_get()
+        old_content_type = self._content_type
+        self._content_type = self.__class__.status_content_types['xml']
         host_xml = self.get_status_host(host)
+        self._content_type = old_content_type
         services = host_xml.getElementsByTagName('services')
         for node in services:
             if node.getAttribute('name').lower() == service.lower():
@@ -278,12 +298,12 @@ class OpsviewRemote(object):
         """
 
         try:
-            filters = [OpsviewRemote.filters[filter] for filter in filters]
+            filters = [self.__class__.filters[filter] for filter in filters]
         except TypeError:
             filters = []
         filters.append(('hostgroupid', int(hostgroup)))
         return minidom.parse(self._send_get(
-            OpsviewRemote.api_urls['status_host'],
+            self.__class__.api_urls['status_host'],
             urlencode(filters)
         ))
 
@@ -295,7 +315,7 @@ class OpsviewRemote(object):
 
         try:
             return minidom.parse(self._send_get('%s/%s' %
-                (OpsviewRemote.api_urls['status_hostgroup'], hostgroup)))
+                (self.__class__.api_urls['status_hostgroup'], hostgroup)))
         except ExpatError:
             raise OpsviewHTTPException('Recieved invalid status XML')
 
@@ -317,7 +337,7 @@ class OpsviewRemote(object):
 
         """
 
-        status = self.get_status_all(['warning', 'critical', 'unhandled'])
+        status = self.get_status_all([STATE_WARNING, STATE_CRITICAL, STATE_UNHANDLED])
         alerting = dict({})
         # These two loops can probably stand to be cleaned up a bit.
         for host in status.getElementsByTagName('list'):
