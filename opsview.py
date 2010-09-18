@@ -83,6 +83,7 @@ class OpsviewValueException(OpsviewException):
     def __str__(self):
         return 'Invalid value: "%s" as %s' % (self.value, self.value_name)
 
+#class Remote(object):
 class OpsviewRemote(object):
     """Remote interface to Opsview server."""
 
@@ -490,6 +491,7 @@ class OpsviewRemote(object):
 
         return self._send_xml(xml)
 
+#class Node(dict):
 class OpsviewNode(dict):
     """Basic Opsview node.
 
@@ -526,13 +528,7 @@ class OpsviewNode(dict):
         try:
             return self['name']
         except KeyError:
-            return self.__class__.__name__
-
-    def __repr__(self):
-        try:
-            return '%s(%s)' % (self.__class__.__name__, self['name'])
-        except KeyError:
-            return '%s()' % self.__class__.__name__
+            return repr(self)
 
     def append_child(self, child_src):
         try:
@@ -548,6 +544,7 @@ class OpsviewNode(dict):
 
     # Whoops, this replaces the builtin dict.update and does something sort of
     #  different. Needs to be replaced with refresh() at some point.
+    #def refresh(self, filters=None):
     def update(self, filters=None):
         raise NotImplementedError()
 
@@ -591,7 +588,7 @@ class OpsviewNode(dict):
             )
         except (OpsviewLogicException, AttributeError):
             if self.__class__.child_type is not None:
-                raise OpsviewParseException('Invalid source structure', '')
+                raise OpsviewParseException('Invalid source structure', src)
 
 
     if json is not None:
@@ -629,6 +626,7 @@ class OpsviewNode(dict):
         def to_json(self):
             return json.dumps(self)
 
+#class Service(Node):
 class OpsviewService(OpsviewNode):
     """Logical Opsview service node."""
 
@@ -643,6 +641,7 @@ class OpsviewService(OpsviewNode):
         ))
         return self
 
+#class Host(Node):
 class OpsviewHost(OpsviewNode):
     """Logical Opsview host node."""
 
@@ -654,6 +653,7 @@ class OpsviewHost(OpsviewNode):
         self.parse_xml(self.remote.get_status_host(self['name'], filters))
         return self
 
+#class Server(Node):
 class OpsviewServer(OpsviewNode):
     """Logical Opsview server node."""
 
@@ -665,6 +665,7 @@ class OpsviewServer(OpsviewNode):
         self.parse_xml(self.remote.get_status_all(filters))
         return self
 
+#class Hostgroup(Server):
 class OpsviewHostgroup(OpsviewServer):
     """Logical Opsview Hostgroup node."""
 
