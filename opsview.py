@@ -10,6 +10,14 @@ except ImportError:
     # The json module was added in Python 2.6
     json = None
 	
+STATE_OK        = 'ok'
+STATE_WARNING   = 'warning'
+STATE_CRITICAL  = 'critical'
+STATE_UNKNOWN   = 'unknown'
+STATE_UNHANDLED = 'unhandled'
+STATE_UP        = 'up'
+STATE_DOWN      = 'down'
+
 if not hasattr(__builtins__, 'all'):
     # all was added in Python 2.5
     def all(target):
@@ -35,12 +43,6 @@ def _dict_to_xml(target):
         ) for key in target
     ]
     return ''.join(element_list)
-
-STATE_OK        = 'ok'
-STATE_WARNING   = 'warning'
-STATE_CRITICAL  = 'critical'
-STATE_UNKNOWN   = 'unknown'
-STATE_UNHANDLED = 'unhandled'
 
 class OpsviewException(Exception):
     """Basic exception."""
@@ -544,6 +546,8 @@ class OpsviewNode(dict):
             raise OpsviewLogicException('%s cannot have children' %
                 self.__class__.__name__)
 
+    # Whoops, this replaces the builtin dict.update and does something sort of
+    #  different. Needs to be replaced with refresh() at some point.
     def update(self, filters=None):
         raise NotImplementedError()
 

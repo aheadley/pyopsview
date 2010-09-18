@@ -4,7 +4,7 @@ from distutils.core import setup
 
 setup(
     name='pyOpsview',
-    version='0.3.0',
+    version='0.3.1',
     description='Opsview interface and utilities.',
     author='Alex Headley',
     author_email='aheadley@waysaboutstuff.com',
