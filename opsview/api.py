@@ -3,6 +3,9 @@
 import requests
 import json
 
+class RestApiException(Exception):
+    pass
+
 class RestApi(RestPathProxy):
     _request_headers = {
         'Content-Type': 'application/json',
@@ -14,6 +17,7 @@ class RestApi(RestPathProxy):
     _name = 'rest'
 
     def __init__(self, base_url):
+        self._base_url = base_url.rstrip('/')
         self._comm = requests.session()
 
     def authenticate(self, username, password):
@@ -35,7 +39,11 @@ class RestApi(RestPathProxy):
         return self._handle_result(result)
 
     def _handle_result(self, result):
-        return json.loads(result.text)
+        if result.status_code != requests.codes.ok:
+            #api error
+            raise RestApiException(result)
+        else:
+            return json.loads(result.text)
 
 class RestPathProxy(object):
     _request_methods = ['get', 'post', 'put', 'delete']
@@ -70,6 +78,5 @@ if __name__ == '__main__':
     import sys
     base_url = sys.argv[1]
     method = sys.argv[2]
-    data = dict(param.split('=', 1) for param in
-        (arg for arg in sys.argv[4:] if '=' in arg))
+    data = dict(param.split('=', 1) for param in sys.argv[4:] if '=' in param)
     print getattr(getattr(RestApi(base_url), sys.argv[3]), method)(**data)
